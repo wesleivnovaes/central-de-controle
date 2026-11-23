@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Central de Controle</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#E9EEF0;--panel:#F7F9FA;--panel-2:#EFF4F6;--ink:#14232B;--mute:#5E7078;
+  --line:#CBD6DA;--acc:#0E7C86;--acc-soft:color-mix(in srgb,var(--acc) 12%,transparent);
+  --accink:#fff;--bad:#C4472F;--bad-soft:color-mix(in srgb,var(--bad) 12%,transparent);
+  --ok:#2F8F4E;--shadow:0 8px 24px rgba(20,35,43,.06);
+  box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0F1A20;--panel:#172830;--panel-2:#1E323C;--ink:#E4EEF1;--mute:#8FA5AD;
+    --line:#2A3F48;--acc:#3FB8C4;--acc-soft:color-mix(in srgb,var(--acc) 15%,transparent);
+    --accink:#08181C;--bad:#EE7A63;--bad-soft:color-mix(in srgb,var(--bad) 15%,transparent);
+    --ok:#49B66B;--shadow:0 10px 28px rgba(0,0,0,.28);color-scheme:dark
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0F1A20;--panel:#172830;--panel-2:#1E323C;--ink:#E4EEF1;--mute:#8FA5AD;
+  --line:#2A3F48;--acc:#3FB8C4;--acc-soft:color-mix(in srgb,var(--acc) 15%,transparent);
+  --accink:#08181C;--bad:#EE7A63;--bad-soft:color-mix(in srgb,var(--bad) 15%,transparent);
+  --ok:#49B66B;--shadow:0 10px 28px rgba(0,0,0,.28);color-scheme:dark
+}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 16px/1.5 Figtree,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+h1,h2,h3{font-family:'Bricolage Grotesque',Figtree,system-ui,sans-serif;margin:0;letter-spacing:-.015em}
+button,input,select,textarea{font:inherit;color:inherit;transition:background-color .16s ease,border-color .16s ease,color .16s ease,transform .12s ease}
+button{cursor:pointer}
+button:active{transform:scale(.99)}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+
+body.locked #app{filter:blur(10px);pointer-events:none;user-select:none}
+
+#app{display:grid;grid-template-columns:272px 1fr;min-height:100vh}
+aside{
+  background:var(--panel);border-right:1px solid var(--line);
+  padding:22px 14px;display:flex;flex-direction:column;gap:5px;position:sticky;top:0;height:100vh;overflow-y:auto
+}
+.brand{display:flex;align-items:center;justify-content:space-between;gap:8px;font:700 22px 'Bricolage Grotesque',sans-serif;padding:0 8px 14px}
+.theme-bar{display:flex;gap:3px;background:var(--bg);padding:3px;border-radius:9px;border:1px solid var(--line)}
+.theme-bar button{border:0;background:none;border-radius:6px;padding:3px 7px;font-size:11px;font-weight:600;color:var(--mute)}
+.theme-bar button.on{background:var(--panel);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+
+.nav{
+  display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+  background:none;border:0;border-radius:10px;padding:10px;min-height:42px;font-weight:500
+}
+.nav:hover{background:var(--panel-2)}
+.nav.on{background:var(--ink);color:var(--bg);font-weight:600}
+.nav .dot{width:11px;height:11px;border-radius:4px;flex:none}
+.nav .n{margin-left:auto;font-size:12px;font-weight:600;padding:1px 7px;border-radius:999px;background:var(--panel-2);color:var(--mute)}
+.nav.on .n{background:rgba(255,255,255,.16);color:inherit}
+
+.side-sep{height:1px;background:var(--line);margin:8px 6px}
+.ghost{
+  background:none;border:1px dashed var(--line);border-radius:10px;
+  padding:9px 10px;color:var(--mute);margin-top:4px;min-height:40px;font-size:14px;text-align:left
+}
+.ghost:hover{border-color:var
