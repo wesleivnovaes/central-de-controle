@@ -37,7 +37,7 @@ button{cursor:pointer}
 button:active{transform:scale(.99)}
 :focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 
-body.locked #app{filter:blur(10px);pointer-events:none;user-select:none}
+body.locked #app{filter:blur(14px);pointer-events:none;user-select:none}
 
 #app{display:grid;grid-template-columns:272px 1fr;min-height:100vh}
 aside{
@@ -48,6 +48,14 @@ aside{
 .theme-bar{display:flex;gap:3px;background:var(--bg);padding:3px;border-radius:9px;border:1px solid var(--line)}
 .theme-bar button{border:0;background:none;border-radius:6px;padding:3px 7px;font-size:11px;font-weight:600;color:var(--mute)}
 .theme-bar button.on{background:var(--panel);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+
+.sync-badge{
+  display:flex;align-items:center;gap:7px;font-size:12px;color:var(--mute);
+  padding:6px 10px;border-radius:9px;background:var(--panel-2);margin-bottom:6px
+}
+.sync-dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none}
+.sync-dot.busy{background:#D08A12}
+.sync-dot.err{background:var(--bad)}
 
 .nav{
   display:flex;align-items:center;gap:10px;width:100%;text-align:left;
@@ -150,7 +158,7 @@ dialog{
   border:1px solid var(--line);border-radius:16px;background:var(--panel);
   color:var(--ink);padding:22px;width:min(510px,94vw);max-height:90vh;box-shadow:0 20px 50px rgba(0,0,0,.28)
 }
-dialog::backdrop{background:rgba(8,16,22,.56);backdrop-filter:blur(3px)}
+dialog::backdrop{background:rgba(8,16,22,.65);backdrop-filter:blur(4px)}
 .f{display:grid;gap:13px}
 .f label{display:grid;gap:5px;font-size:13px;font-weight:500;color:var(--mute)}
 .row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
@@ -212,7 +220,7 @@ svg.ch{width:100%;height:auto;display:block}
     position:static;height:auto;flex-direction:row;overflow-x:auto;
     border-right:0;border-bottom:1px solid var(--line);padding:10px;align-items:center;gap:6px
   }
-  .brand,.side-sep{display:none}
+  .brand,.side-sep,.sync-badge{display:none}
   .nav{width:auto;white-space:nowrap;flex:none;padding:8px 11px}
   .ghost{margin:0;flex:none;white-space:nowrap}
   .toolbar{grid-template-columns:1fr}
@@ -225,13 +233,22 @@ svg.ch{width:100%;height:auto;display:block}
 <body class="locked">
 <div id="app"><aside id="side"></aside><main id="main"></main></div>
 <div id="toast" role="status" aria-live="polite"></div>
+
+<!-- Modal de Login / Conta -->
 <dialog id="dl"></dialog>
 <dialog id="dt"></dialog>
 <dialog id="ds"></dialog>
 <dialog id="dk"></dialog>
 <dialog id="dv"><img id="big" alt="Foto ampliada" style="width:100%;border-radius:10px"><div class="acts" style="margin-top:14px"><button class="btn" id="vc">Fechar</button></div></dialog>
 
-<script>
+<script type="module">
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+
+/* CONFIGURAÇÃO DO SUPABASE */
+const SUPABASE_URL = 'https://byblclubmufznpcjrcsv.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_hgLz5z_Hr-9MhJ4l3NAL4A_TfGkc8cV';
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
 const $=s=>document.querySelector(s),uid=()=>Math.random().toString(36).slice(2,9);
 const COL=['#0E7C86','#C4472F','#6B5BD2','#D08A12','#2F8F4E','#B4408C'];
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&','<':'<','>':'>','"':'"'}[c]));
@@ -240,19 +257,24 @@ const TODAY=iso(new Date());
 const fd=d=>d===TODAY?'Hoje':new Date(d+'T00:00').toLocaleDateString('pt-BR',{weekday:'short',day:'numeric',month:'short'});
 const brl=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 
-let S={
-  theme:'auto',
-  accent:'',
-  auth:'',
-  subs:['Polícia Militar','Projeto Theik','Projeto Theik House','Gastos Pessoais','PC Gamer'].map((n,i)=>({id:uid(),name:n,color:COL[i],cats:[]})),
-  tasks:[],
-  files:[],
-  fin:[],
-  meta:0
-};
+function defaultState(){
+  return {
+    theme:'auto',
+    accent:'',
+    updatedAt:0,
+    subs:['Polícia Militar','Projeto Theik','Projeto Theik House','Gastos Pessoais','PC Gamer'].map((n,i)=>({id:uid(),name:n,color:COL[i],cats:[]})),
+    tasks:[],
+    files:[],
+    fin:[],
+    meta:0
+  };
+}
 
+let S=defaultState();
+let currentUser=null;
+let syncState='ok'; // ok | busy | err
+let syncLabel='Sincronizado';
 let view='hoje',mode='tarefas',cur=null,csub=null,delArm=false,fcat='',fm=TODAY.slice(0,7),qtext='',fstatus='all',fpay='';
-let unlocked=false,authMode='unlock';
 
 let toastTm;
 function notify(msg){
@@ -263,134 +285,153 @@ function notify(msg){
   toastTm=setTimeout(()=>el.classList.remove('show'),2600);
 }
 
-/* Segurança de senha/PIN local (salt + SHA-256) */
-async function hashSecret(secret,salt){
-  const data=new TextEncoder().encode(salt+':'+secret);
-  const buf=await crypto.subtle.digest('SHA-256',data);
-  return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
-}
-function makeSalt(){
-  const a=new Uint8Array(12);
-  crypto.getRandomValues(a);
-  return [...a].map(b=>b.toString(16).padStart(2,'0')).join('');
-}
-async function setAuthSecret(secret){
-  const salt=makeSalt();
-  const h=await hashSecret(secret,salt);
-  S.auth=salt+':'+h;
-  unlocked=true;
-  save();
-}
-async function checkAuthSecret(secret){
-  if(!S.auth||!S.auth.includes(':'))return false;
-  const[salt,expected]=S.auth.split(':');
-  const got=await hashSecret(secret,salt);
-  return got===expected;
+function setSyncStatus(st,lbl){
+  syncState=st;
+  syncLabel=lbl;
+  const dot=$('.sync-dot'),txt=$('.sync-txt');
+  if(dot){dot.className='sync-dot'+(st==='busy'?' busy':st==='err'?' err':'')}
+  if(txt)txt.textContent=lbl;
 }
 
-function syncLockState(){
-  const needLock=Boolean(S.auth)&&!unlocked;
-  document.body.classList.toggle('locked',needLock);
+/* ================= LOGIN & SINCRONIZAÇÃO NUVEM ================= */
+function drawLogin(err='',busy=false){
+  $('#dl').innerHTML=`<form class="f" id="loginForm">
+    <h2>Acesso Privado</h2>
+    <p class="sub" style="margin:0">Entre com seu e-mail e senha para carregar seus dados na nuvem.</p>
+    <label>E-mail<input id="lemail" type="email" autocomplete="email" required placeholder="seu@email.com"></label>
+    <label>Senha<input id="lpass" type="password" autocomplete="current-password" required placeholder="Sua senha"></label>
+    ${err?`<p style="color:var(--bad);margin:0;font-size:13px;font-weight:600" role="alert">${esc(err)}</p>`:''}
+    <div class="acts">
+      <button class="btn pri" type="submit" ${busy?'disabled':''}>${busy?'Entrando...':'Entrar'}</button>
+    </div>
+  </form>`;
+  setTimeout(()=>$('#lemail')?.focus(),20);
+}
+
+function updateAuthUI(){
+  const logged=Boolean(currentUser);
+  document.body.classList.toggle('locked',!logged);
   const dlg=$('#dl');
-  if(needLock){
-    authMode='unlock';
-    drawAuth();
+  if(!logged){
+    drawLogin();
     if(!dlg.open)dlg.showModal();
-  }else if(dlg.open&&(authMode==='unlock'||authMode==='force-setup')){
+  }else if(dlg.open){
     dlg.close();
   }
 }
 
-function drawAuth(err=''){
-  const hasAuth=Boolean(S.auth);
-  let body='';
-  if(authMode==='unlock'){
-    body=`<div class="f">
-      <h2>Acesso bloqueado</h2>
-      <p class="sub" style="margin:0">Digite sua senha ou PIN para abrir a <strong>Central de Controle</strong>.</p>
-      <label>Senha ou PIN<input id="apass" type="password" autocomplete="current-password" placeholder="Digite sua senha ou PIN"></label>
-      ${err?`<p style="color:var(--bad);margin:0;font-size:13px;font-weight:600" role="alert">${esc(err)}</p>`:''}
-      <div class="acts"><button class="btn pri" type="button" id="aunlock">Entrar</button></div>
-    </div>`;
-  }else if(!hasAuth){
-    body=`<div class="f">
-      <h2>Criar senha ou PIN de acesso</h2>
-      <p class="sub" style="margin:0">Proteja seus dados locais neste navegador. Use ao menos 4 caracteres.</p>
-      <label>Nova senha ou PIN<input id="apass1" type="password" autocomplete="new-password" placeholder="Mínimo 4 caracteres"></label>
-      <label>Confirmar senha ou PIN<input id="apass2" type="password" autocomplete="new-password" placeholder="Repita a senha ou PIN"></label>
-      ${err?`<p style="color:var(--bad);margin:0;font-size:13px;font-weight:600" role="alert">${esc(err)}</p>`:''}
-      <div class="acts">
-        <button class="btn" type="button" id="aclose">Cancelar</button>
-        <button class="btn pri" type="button" id="asave">Salvar senha</button>
-      </div>
-    </div>`;
+async function cloudPull(){
+  if(!currentUser)return null;
+  setSyncStatus('busy','Buscando nuvem...');
+  const{data,error}=await supabase
+    .from('user_state')
+    .select('state,updated_at')
+    .eq('user_id',currentUser.id)
+    .maybeSingle();
+
+  if(error){
+    setSyncStatus('err','Erro ao sincronizar');
+    notify('Erro ao buscar dados da nuvem.');
+    return null;
+  }
+  setSyncStatus('ok','Nuvem conectada');
+  return data?.state||null;
+}
+
+async function cloudPush(){
+  if(!currentUser)return;
+  setSyncStatus('busy','Salvando na nuvem...');
+  const{error}=await supabase
+    .from('user_state')
+    .upsert({
+      user_id:currentUser.id,
+      state:S,
+      updated_at:new Date().toISOString()
+    },{onConflict:'user_id'});
+
+  if(error){
+    setSyncStatus('err','Falha ao salvar na nuvem');
+    notify('Erro ao salvar na nuvem: '+error.message);
   }else{
-    body=`<div class="f">
-      <h2>Gerenciar senha ou PIN</h2>
-      <p class="sub" style="margin:0">Altere sua senha atual ou remova o bloqueio deste navegador.</p>
-      <label>Senha ou PIN atual<input id="acurr" type="password" autocomplete="current-password" placeholder="Digite a senha atual"></label>
-      <label>Nova senha ou PIN (deixe vazio para apenas remover)<input id="apass1" type="password" autocomplete="new-password" placeholder="Nova senha (opcional)"></label>
-      <label>Confirmar nova senha<input id="apass2" type="password" autocomplete="new-password" placeholder="Repita a nova senha"></label>
-      ${err?`<p style="color:var(--bad);margin:0;font-size:13px;font-weight:600" role="alert">${esc(err)}</p>`:''}
-      <div class="acts">
-        <button class="btn" type="button" id="aclose">Fechar</button>
-        <button class="btn bad" type="button" id="aremove">Remover bloqueio</button>
-        <button class="btn pri" type="button" id="asave">Atualizar senha</button>
-      </div>
-    </div>`;
+    setSyncStatus('ok','Sincronizado');
   }
-  $('#dl').innerHTML=body;
-  setTimeout(()=>$('#apass,#apass1,#acurr')?.focus(),20);
 }
 
-function openAuthManage(){
-  authMode='manage';
-  drawAuth();
-  $('#dl').showModal();
-}
+async function syncAfterLogin(){
+  const localData=await loadLocal();
+  const cloudData=await cloudPull();
 
-function lockNow(){
-  if(!S.auth){
-    authMode='manage';
-    drawAuth('Defina uma senha ou PIN primeiro para poder bloquear a tela.');
-    $('#dl').showModal();
-    return;
+  if(cloudData&&Array.isArray(cloudData.subs)){
+    const localTs=localData?.updatedAt||0;
+    const cloudTs=cloudData?.updatedAt||0;
+    if(localData&&Array.isArray(localData.subs)&&localTs>cloudTs){
+      S=localData;
+      mig();
+      await cloudPush();
+    }else{
+      S=cloudData;
+      mig();
+      await saveLocalOnly();
+    }
+  }else if(localData&&Array.isArray(localData.subs)){
+    S=localData;
+    mig();
+    await cloudPush();
+  }else{
+    S=defaultState();
+    S.updatedAt=Date.now();
+    await saveLocalOnly();
+    await cloudPush();
   }
-  unlocked=false;
-  syncLockState();
-  notify('Tela bloqueada.');
+
+  applyAcc();
+  applyTheme();
+  render();
 }
 
-/* Armazenamento local (IndexedDB) */
+/* ================= CACHE LOCAL (INDEXEDDB) ================= */
 const idb=()=>new Promise((res,rej)=>{
   try{
-    const r=indexedDB.open('central',1);
+    const r=indexedDB.open('central_v2',1);
     r.onupgradeneeded=()=>r.result.createObjectStore('kv');
     r.onsuccess=()=>res(r.result);
     r.onerror=()=>rej(r.error);
   }catch(e){rej(e)}
 });
-async function load(){
+
+function localKey(){
+  return currentUser?'s_'+currentUser.id:'s_guest';
+}
+
+async function loadLocal(){
   try{
     const db=await idb();
     return await new Promise(res=>{
-      const q=db.transaction('kv').objectStore('kv').get('s');
+      const q=db.transaction('kv').objectStore('kv').get(localKey());
       q.onsuccess=()=>res(q.result);
       q.onerror=()=>res(null);
     });
   }catch(e){return null}
 }
-let tm;
-function save(){
-  clearTimeout(tm);
-  tm=setTimeout(async()=>{
-    try{
-      const db=await idb();
-      db.transaction('kv','readwrite').objectStore('kv').put(S,'s');
-    }catch(e){notify('Não foi possível salvar no navegador.')}
-  },180);
+
+async function saveLocalOnly(){
+  try{
+    const db=await idb();
+    db.transaction('kv','readwrite').objectStore('kv').put(S,localKey());
+  }catch(e){}
 }
 
+let tm;
+function save(){
+  S.updatedAt=Date.now();
+  clearTimeout(tm);
+  tm=setTimeout(async()=>{
+    await saveLocalOnly();
+    await cloudPush();
+  },350);
+}
+
+/* ================= LÓGICA PRINCIPAL ================= */
 const sub=id=>S.subs.find(s=>s.id===id)||{name:'Geral',color:'#888',cats:[]};
 const pend=id=>S.tasks.filter(t=>!t.done&&(!id||t.sub===id)).length;
 
@@ -439,15 +480,16 @@ function render(){
     '<div class="brand"><span>Central</span><div class="theme-bar" role="group" aria-label="Tema">'+
     ['auto','light','dark'].map(t=>`<button class="${(S.theme||'auto')===t?'on':''}" data-th="${t}">${t==='auto'?'Auto':t==='light'?'Claro':'Escuro'}</button>`).join('')+
     '</div></div>'+
+    `<div class="sync-badge"><span class="sync-dot ${syncState==='busy'?'busy':syncState==='err'?'err':''}"></span><span class="sync-txt">${esc(syncLabel)}</span></div>`+
     `<button class="nav ${view==='hoje'?'on':''}" data-v="hoje"><span class="dot" style="background:var(--acc)"></span>Hoje<span class="n">${S.tasks.filter(t=>!t.done&&t.date&&t.date<=TODAY).length}</span></button>`+
     S.subs.map(s=>`<button class="nav ${view===s.id?'on':''}" data-v="${s.id}"><span class="dot" style="background:${s.color}"></span>${esc(s.name)}<span class="n">${pend(s.id)}</span></button>`).join('')+
     `<button class="nav ${view==='gastos'?'on':''}" data-v="gastos"><span class="dot" style="background:var(--mute)"></span>Gastos por mês</button>`+
     '<div class="side-sep"></div>'+
     '<button class="ghost" id="ns">+ Novo assunto</button>'+
     '<button class="ghost" id="pz">Personalizar cores</button>'+
+    '<button class="ghost" id="syncnow">Sincronizar agora</button>'+
     '<button class="ghost" id="bk">Backup dos dados</button>'+
-    `<button class="ghost" id="authcfg">${S.auth?'Alterar / remover senha':'Configurar senha / PIN'}</button>`+
-    '<button class="ghost" id="lockbtn">Bloquear tela</button>';
+    '<button class="ghost" id="logoutbtn" style="color:var(--bad)">Sair da conta</button>';
 
   const m=$('#main');
   if(view==='gastos'){
@@ -638,66 +680,43 @@ function drawS(){
   });
 });
 
+/* Impede fechar o modal de login apertando ESC */
 $('#dl').addEventListener('cancel',e=>{
-  if(Boolean(S.auth)&&!unlocked)e.preventDefault();
+  if(!currentUser)e.preventDefault();
+});
+
+document.addEventListener('submit',async e=>{
+  if(e.target.id==='loginForm'){
+    e.preventDefault();
+    const email=$('#lemail').value.trim();
+    const password=$('#lpass').value;
+    drawLogin('',true);
+    const{data,error}=await supabase.auth.signInWithPassword({email,password});
+    if(error){
+      drawLogin('E-mail ou senha inválidos.',false);
+      return;
+    }
+    currentUser=data.user;
+    updateAuthUI();
+    await syncAfterLogin();
+    notify('Bem-vindo de volta!');
+  }
 });
 
 document.addEventListener('click',async e=>{
   const g=a=>e.target.closest('['+a+']'),id=e.target.id;
 
-  if(id==='aunlock'){
-    const pass=$('#apass')?.value||'';
-    if(await checkAuthSecret(pass)){
-      unlocked=true;
-      syncLockState();
-      notify('Acesso liberado.');
-    }else{
-      drawAuth('Senha ou PIN incorreto.');
-    }
+  if(id==='logoutbtn'){
+    await supabase.auth.signOut();
+    currentUser=null;
+    S=defaultState();
+    updateAuthUI();
+    notify('Sessão encerrada.');
   }
-  else if(id==='asave'){
-    const hasAuth=Boolean(S.auth);
-    if(hasAuth){
-      const curr=$('#acurr')?.value||'';
-      if(!(await checkAuthSecret(curr))){
-        drawAuth('A senha ou PIN atual está incorreta.');
-        return;
-      }
-    }
-    const p1=$('#apass1')?.value||'';
-    const p2=$('#apass2')?.value||'';
-    if(p1.length<4){
-      drawAuth('A nova senha ou PIN deve ter pelo menos 4 caracteres.');
-      return;
-    }
-    if(p1!==p2){
-      drawAuth('A confirmação não coincide com a nova senha.');
-      return;
-    }
-    await setAuthSecret(p1);
-    $('#dl').close();
-    render();
-    notify(hasAuth?'Senha atualizada!':'Senha / PIN ativado!');
+  else if(id==='syncnow'){
+    await syncAfterLogin();
+    notify('Sincronização concluída!');
   }
-  else if(id==='aremove'){
-    const curr=$('#acurr')?.value||'';
-    if(!(await checkAuthSecret(curr))){
-      drawAuth('Informe a senha ou PIN atual para remover o bloqueio.');
-      return;
-    }
-    S.auth='';
-    unlocked=true;
-    save();
-    $('#dl').close();
-    render();
-    notify('Bloqueio removido.');
-  }
-  else if(id==='aclose'){
-    $('#dl').close();
-    syncLockState();
-  }
-  else if(id==='authcfg'){openAuthManage()}
-  else if(id==='lockbtn'){lockNow()}
   else if(g('data-th')){
     S.theme=g('data-th').dataset.th;
     save();render();notify(S.theme==='auto'?'Tema automático ativado.':S.theme==='dark'?'Tema escuro ativado.':'Tema claro ativado.');
@@ -797,8 +816,6 @@ document.addEventListener('click',async e=>{
 });
 
 document.addEventListener('keydown',e=>{
-  if(e.key==='Enter'&&e.target.id==='apass'){e.preventDefault();$('#aunlock')?.click()}
-  if(e.key==='Enter'&&(e.target.id==='apass1'||e.target.id==='apass2'||e.target.id==='acurr')){e.preventDefault();$('#asave')?.click()}
   if(e.key==='Enter'&&e.target.id==='q')addQuick();
   if(e.key==='Enter'&&e.target.id==='fa')addFin();
   if(e.key==='Enter'&&e.target.id==='subin'){
@@ -854,9 +871,9 @@ function gastos(){
 function openBk(){
   $('#dk').innerHTML=`<div class="f">
     <h2>Backup dos dados</h2>
-    <p class="sub" style="margin:0">Baixe um arquivo <code>.json</code> com seus assuntos, tarefas, fotos, arquivos e lançamentos financeiros. Use-o para transferir ou guardar em segurança.</p>
+    <p class="sub" style="margin:0">Baixe um arquivo <code>.json</code> com seus assuntos, tarefas, fotos, arquivos e lançamentos financeiros.</p>
     <div class="acts" style="justify-content:flex-start"><button class="btn pri" type="button" id="bx">Exportar arquivo (.json)</button></div>
-    <label>Restaurar de um backup (substitui os dados atuais)<input type="file" id="rf" accept=".json,application/json"></label>
+    <label>Restaurar de um backup (substitui os dados atuais e envia à nuvem)<input type="file" id="rf" accept=".json,application/json"></label>
     <p id="bm" class="sub" style="margin:0" role="status"></p>
     <div class="acts"><button class="btn" type="button" id="bc">Fechar</button></div>
   </div>`;
@@ -876,21 +893,8 @@ async function exportBk(){
   const m=$('#bm');
   const fname='central-backup-'+TODAY+'.json';
   const payload=JSON.stringify(S,null,2);
-  try{
-    if(window.claude&&typeof claude.use==='function'){
-      const dl=await claude.use('downloads');
-      if(dl&&typeof dl.save==='function'){
-        await dl.save({filename:fname,data:payload});
-        m.textContent='Backup salvo com sucesso.';notify('Backup exportado!');return;
-      }
-    }
-    triggerDownload(fname,payload,'application/json');
-    m.textContent='Backup baixado ('+fname+').';notify('Backup exportado!');
-  }catch(e){
-    if(e&&e.code==='declined'){m.textContent='Exportação cancelada.';return}
-    triggerDownload(fname,payload,'application/json');
-    m.textContent='Backup baixado.';
-  }
+  triggerDownload(fname,payload,'application/json');
+  m.textContent='Backup baixado ('+fname+').';notify('Backup exportado!');
 }
 
 async function restoreBk(f){
@@ -898,8 +902,8 @@ async function restoreBk(f){
   try{
     const d=JSON.parse(await f.text());
     if(!Array.isArray(d.subs)||!Array.isArray(d.tasks))throw new Error('Estrutura inválida');
-    S=d;mig();unlocked=true;applyAcc();applyTheme();save();view='hoje';render();syncLockState();
-    m.textContent='Dados restaurados: '+d.subs.length+' assuntos e '+d.tasks.length+' tarefas.';
+    S=d;mig();applyAcc();applyTheme();save();view='hoje';render();
+    m.textContent='Dados restaurados e enviados à nuvem: '+d.subs.length+' assuntos e '+d.tasks.length+' tarefas.';
     notify('Backup restaurado com sucesso!');
   }catch(e){
     m.textContent='Arquivo inválido. Escolha um backup .json exportado pela Central de Controle.';
@@ -908,7 +912,7 @@ async function restoreBk(f){
 
 const mig=()=>{
   S.theme=S.theme||'auto';
-  S.auth=S.auth||'';
+  S.updatedAt=S.updatedAt||0;
   S.files=S.files||[];
   S.fin=S.fin||[];
   S.meta=S.meta||0;
@@ -956,7 +960,7 @@ function filesView(id){
       <button class="btn" type="button" data-fs="${f.id}">Baixar</button>
       <button class="btn bad" type="button" data-fx="${f.id}" aria-label="Excluir ${esc(f.name)}">×</button>
     </div>`).join('')
-    :'<div class="empty">Nenhum arquivo guardado neste assunto. Adicione PDFs, planilhas, documentos ou imagens (até 15 MB cada).</div>');
+    :'<div class="empty">Nenhum arquivo guardado neste assunto. Adicione PDFs, planilhas, documentos ou imagens (até 5 MB cada para sincronizar rápido).</div>');
 }
 
 const rd=f=>new Promise(res=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>res(null);r.readAsDataURL(f)});
@@ -965,13 +969,13 @@ const d2b=u=>{const[h,b]=u.split(','),bin=atob(b),a=new Uint8Array(bin.length);f
 async function addFiles(L){
   let ok=0,big=[];
   for(const f of L){
-    if(f.size>15728640){big.push(f.name);continue}
+    if(f.size>5242880){big.push(f.name);continue}
     const data=await rd(f);if(!data)continue;
     S.files.push({id:uid(),sub:view,name:f.name,type:f.type||'application/octet-stream',size:f.size,date:TODAY,data});
     ok++;
   }
   save();render();
-  const msg=(ok?ok+' arquivo(s) guardado(s). ':'')+(big.length?'Excede 15 MB: '+big.join(', '):'');
+  const msg=(ok?ok+' arquivo(s) guardado(s). ':'')+(big.length?'Excede 5 MB: '+big.join(', '):'');
   if($('#fm'))$('#fm').textContent=msg;
   if(ok)notify(ok+' arquivo(s) salvo(s).');
 }
@@ -980,21 +984,8 @@ async function saveFile(id){
   const f=S.files.find(x=>x.id===id),m=$('#fm');
   if(!f)return;
   const blob=d2b(f.data);
-  try{
-    if(window.claude&&typeof claude.use==='function'){
-      const dl=await claude.use('downloads');
-      if(dl&&typeof dl.save==='function'){
-        await dl.save({filename:f.name,data:blob});
-        if(m)m.textContent='Arquivo salvo.';notify('Download concluído.');return;
-      }
-    }
-    triggerDownload(f.name,blob,f.type||'application/octet-stream');
-    if(m)m.textContent='Arquivo baixado.';notify('Download concluído.');
-  }catch(e){
-    if(e&&e.code==='declined'){if(m)m.textContent='Download cancelado.';return}
-    triggerDownload(f.name,blob,f.type||'application/octet-stream');
-    if(m)m.textContent='Arquivo baixado.';
-  }
+  triggerDownload(f.name,blob,f.type||'application/octet-stream');
+  if(m)m.textContent='Arquivo baixado.';notify('Download concluído.');
 }
 
 const isFin=s=>/gasto|financ/i.test(s.name||'');
@@ -1083,7 +1074,7 @@ function finView(){
     <svg class="ch" viewBox="0 0 600 148" role="img" aria-label="Entradas e saídas por dia">
       <line x1="0" x2="600" y1="16" y2="16" stroke-dasharray="3 3" style="stroke:var(--line);opacity:.6"/>
       <line x1="0" x2="600" y1="70" y2="70" stroke-dasharray="3 3" style="stroke:var(--line);opacity:.6"/>
-      <line x1="0" x2="600" y1="124" y2="124" style="stroke:var(--line)"/>
+      <line x1="0" x2="600" y1="124" y2="124" stroke-dasharray="3 3" style="stroke:var(--line)"/>
       <text x="596" y="12" text-anchor="end" style="fill:var(--mute);font-size:9px">máx: ${brl(mx)}</text>
       ${bars}
     </svg>
@@ -1121,45 +1112,17 @@ function finView(){
   </div>`;
 }
 
+/* ================= INICIALIZAÇÃO ================= */
 (async()=>{
-  const d=await load();
-  if(d&&Array.isArray(d.subs))S=d;
-  mig();applyAcc();applyTheme();render();syncLockState();
+  const{data}=await supabase.auth.getSession();
+  currentUser=data?.session?.user||null;
+  updateAuthUI();
+  if(currentUser){
+    await syncAfterLogin();
+  }else{
+    render();
+  }
 })();
 </script>
 </body>
 </html>
-<script type="module">
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
-
-const SUPABASE_URL = 'https://byblclubmufznpcjrcsv.supabase.co/rest/v1/';
-const SUPABASE_KEY = 'sb_publishable_hgLz5z_Hr-9MhJ4l3NAL4A_TfGkc8cV';
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-
-let currentUser = null;
-
-async function cloudPull() {
-  if (!currentUser) return null;
-  const { data, error } = await supabase
-    .from('user_state')
-    .select('state')
-    .eq('user_id', currentUser.id)
-    .maybeSingle();
-  if (error) {
-    notify('Erro ao buscar dados da nuvem.');
-    return null;
-  }
-  return data?.state || null;
-}
-
-async function cloudPush() {
-  if (!currentUser) return;
-  const { error } = await supabase
-    .from('user_state')
-    .upsert({
-      user_id: currentUser.id,
-      state: S,
-      updated_at: new Date().toISOString()
-    }, { onConflict: 'user_id' });
-  if (error) notify('Erro ao sincronizar na nuvem.');
-}
