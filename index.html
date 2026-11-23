@@ -1,37 +1,3 @@
-<script type="module">
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
-
-const SUPABASE_URL = 'https://byblclubmufznpcjrcsv.supabase.co/rest/v1/';
-const SUPABASE_KEY = 'sb_publishable_hgLz5z_Hr-9MhJ4l3NAL4A_TfGkc8cV';
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-
-let currentUser = null;
-
-async function cloudPull() {
-  if (!currentUser) return null;
-  const { data, error } = await supabase
-    .from('user_state')
-    .select('state')
-    .eq('user_id', currentUser.id)
-    .maybeSingle();
-  if (error) {
-    notify('Erro ao buscar dados da nuvem.');
-    return null;
-  }
-  return data?.state || null;
-}
-
-async function cloudPush() {
-  if (!currentUser) return;
-  const { error } = await supabase
-    .from('user_state')
-    .upsert({
-      user_id: currentUser.id,
-      state: S,
-      updated_at: new Date().toISOString()
-    }, { onConflict: 'user_id' });
-  if (error) notify('Erro ao sincronizar na nuvem.');
-}
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
