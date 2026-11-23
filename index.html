@@ -199,7 +199,7 @@ dialog::backdrop{background:rgba(8,16,22,.65);backdrop-filter:blur(4px)}
 .kp{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:16px}
 .kp div{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;box-shadow:var(--shadow)}
 .kp span{font-size:12px;color:var(--mute);display:block}
-.kp b{font:700 21px 'Bricolage Grotesque',sans-serif;margin-top:3px;display:block}
+.kp b{font:700 20px 'Bricolage Grotesque',sans-serif;margin-top:3px;display:block}
 .lg{display:flex;gap:14px;font-size:12px;color:var(--mute);margin-bottom:8px}
 .lg i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px}
 .cr{margin-bottom:12px}
@@ -234,7 +234,6 @@ svg.ch{width:100%;height:auto;display:block}
 <div id="app"><aside id="side"></aside><main id="main"></main></div>
 <div id="toast" role="status" aria-live="polite"></div>
 
-<!-- Modal de Login / Conta -->
 <dialog id="dl"></dialog>
 <dialog id="dt"></dialog>
 <dialog id="ds"></dialog>
@@ -244,7 +243,6 @@ svg.ch{width:100%;height:auto;display:block}
 <script type="module">
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
 
-/* CONFIGURAÇÃO DO SUPABASE */
 const SUPABASE_URL = 'https://byblclubmufznpcjrcsv.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hgLz5z_Hr-9MhJ4l3NAL4A_TfGkc8cV';
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -256,6 +254,7 @@ const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+Stri
 const TODAY=iso(new Date());
 const fd=d=>d===TODAY?'Hoje':new Date(d+'T00:00').toLocaleDateString('pt-BR',{weekday:'short',day:'numeric',month:'short'});
 const brl=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const sbrl=v=>(v>0?'+':v<0?'−':'')+brl(Math.abs(v||0));
 
 function defaultState(){
   return {
@@ -266,15 +265,17 @@ function defaultState(){
     tasks:[],
     files:[],
     fin:[],
-    meta:0
+    meta:0,
+    trades:[],
+    bancaIni:0
   };
 }
 
 let S=defaultState();
 let currentUser=null;
-let syncState='ok'; // ok | busy | err
+let syncState='ok';
 let syncLabel='Sincronizado';
-let view='hoje',mode='tarefas',cur=null,csub=null,delArm=false,fcat='',fm=TODAY.slice(0,7),qtext='',fstatus='all',fpay='';
+let view='hoje',mode='tarefas',cur=null,csub=null,delArm=false,fcat='',fm=TODAY.slice(0,7),tm=TODAY.slice(0,7),qtext='',fstatus='all',fpay='',tsetup='';
 
 let toastTm;
 function notify(msg){
@@ -421,14 +422,24 @@ async function saveLocalOnly(){
   }catch(e){}
 }
 
-let tm;
+let timerSave;
 function save(){
   S.updatedAt=Date.now();
-  clearTimeout(tm);
-  tm=setTimeout(async()=>{
+  clearTimeout(timerSave);
+  timerSave=setTimeout(async()=>{
     await saveLocalOnly();
     await cloudPush();
   },350);
+}
+
+/* ================= DETECTORES DE MÓDULOS ================= */
+const isFin=s=>/gasto|financ/i.test(s?.name||'');
+const isTrade=s=>/theik$/i.test((s?.name||'').trim())||/^projeto theik$/i.test((s?.name||'').trim());
+
+function defaultModeFor(s){
+  if(isTrade(s))return 'trades';
+  if(isFin(s))return 'fin';
+  return 'tarefas';
 }
 
 /* ================= LÓGICA PRINCIPAL ================= */
@@ -516,14 +527,18 @@ function render(){
     const tot=T.reduce((a,t)=>a+(Number(t.val)||0),0);
     m.innerHTML=
       `<div class="head"><span class="dot" style="width:16px;height:16px;border-radius:5px;background:${s.color};margin-bottom:8px"></span><h1>${esc(s.name)}</h1>`+
-      `<div class="tabs"><button class="tab ${mode==='tarefas'?'on':''}" data-m="tarefas">Tarefas</button>`+
+      `<div class="tabs">`+
+      `${isTrade(s)?`<button class="tab ${mode==='trades'?'on':''}" data-m="trades">Trades WIN</button>`:''}`+
+      `<button class="tab ${mode==='tarefas'?'on':''}" data-m="tarefas">Tarefas</button>`+
       `<button class="tab ${mode==='galeria'?'on':''}" data-m="galeria">Fotos</button>`+
       `<button class="tab ${mode==='arquivos'?'on':''}" data-m="arquivos">Arquivos</button>`+
       `${isFin(s)?`<button class="tab ${mode==='fin'?'on':''}" data-m="fin">Financeiro</button>`:''}`+
       `<button class="tab" id="es">Editar</button></div></div>`+
       `<p class="sub">${T.filter(t=>t.done).length} de ${T.length} concluídas${tot?' · Total '+brl(tot):''}</p>`;
 
-    if(mode==='fin'){
+    if(mode==='trades'){
+      m.innerHTML+=tradesView();
+    }else if(mode==='fin'){
       m.innerHTML+=finView();
     }else if(mode==='arquivos'){
       m.innerHTML+=filesView(view);
@@ -680,7 +695,6 @@ function drawS(){
   });
 });
 
-/* Impede fechar o modal de login apertando ESC */
 $('#dl').addEventListener('cancel',e=>{
   if(!currentUser)e.preventDefault();
 });
@@ -723,8 +737,8 @@ document.addEventListener('click',async e=>{
   }
   else if(g('data-v')){
     view=g('data-v').dataset.v;
-    mode=isFin(sub(view))?'fin':'tarefas';
-    fcat='';fpay='';render();
+    mode=defaultModeFor(sub(view));
+    fcat='';fpay='';tsetup='';render();
   }
   else if(g('data-m')){mode=g('data-m').dataset.m;render()}
   else if(g('data-st')){fstatus=g('data-st').dataset.st;render()}
@@ -766,10 +780,18 @@ document.addEventListener('click',async e=>{
   }
   else if(id==='fadd')addFin();
   else if(g('data-pay')){fpay=g('data-pay').dataset.pay;render()}
-  else if(g('data-fm')){fm=shiftM(+g('data-fm').dataset.fm);render()}
+  else if(g('data-fm')){fm=shiftM(fm,+g('data-fm').dataset.fm);render()}
   else if(g('data-fl')){
     const b=g('data-fl'),lid=b.dataset.fl;
     if(b.dataset.arm){S.fin=S.fin.filter(x=>x.id!==lid);save();render();notify('Lançamento removido.')}
+    else{b.dataset.arm=1;b.textContent='Confirmar'}
+  }
+  else if(id==='tadd')addTrade();
+  else if(g('data-tm')){tm=shiftM(tm,+g('data-tm').dataset.tm);render()}
+  else if(g('data-tsetup')){tsetup=g('data-tsetup').dataset.tsetup;render()}
+  else if(g('data-tdel')){
+    const b=g('data-tdel'),tid=b.dataset.tdel;
+    if(b.dataset.arm){S.trades=S.trades.filter(x=>x.id!==tid);save();render();notify('Trade removido.')}
     else{b.dataset.arm=1;b.textContent='Confirmar'}
   }
   else if(id==='pz')openPz();
@@ -800,7 +822,7 @@ document.addEventListener('click',async e=>{
     csub.name=$('#sn').value.trim()||'Novo assunto';
     csub.cats=$('#sc').value.split(',').map(x=>x.trim()).filter(Boolean);
     const{isNew,...s}=csub;
-    if(isNew){S.subs.push(s);view=s.id;mode=isFin(s)?'fin':'tarefas';notify('Assunto criado.')}
+    if(isNew){S.subs.push(s);view=s.id;mode=defaultModeFor(s);notify('Assunto criado.')}
     else{S.subs[S.subs.findIndex(x=>x.id===s.id)]=s;notify('Assunto atualizado.')}
     save();$('#ds').close();render();
   }
@@ -818,6 +840,7 @@ document.addEventListener('click',async e=>{
 document.addEventListener('keydown',e=>{
   if(e.key==='Enter'&&e.target.id==='q')addQuick();
   if(e.key==='Enter'&&e.target.id==='fa')addFin();
+  if(e.key==='Enter'&&e.target.id==='trval')addTrade();
   if(e.key==='Enter'&&e.target.id==='subin'){
     e.preventDefault();
     $('#subadd')?.click();
@@ -839,6 +862,7 @@ document.addEventListener('change',async e=>{
   else if(e.target.id==='rf')restoreBk(e.target.files[0]);
   else if(e.target.id==='fu'){await addFiles([...e.target.files])}
   else if(e.target.id==='fmeta'){S.meta=Math.max(0,+e.target.value||0);save();render();notify('Meta mensal atualizada.')}
+  else if(e.target.id==='tbanca'){S.bancaIni=Number(e.target.value)||0;save();render();notify('Saldo inicial da banca atualizado.')}
   else if(e.target.id==='tf'){
     grab();
     for(const f of e.target.files){
@@ -871,7 +895,7 @@ function gastos(){
 function openBk(){
   $('#dk').innerHTML=`<div class="f">
     <h2>Backup dos dados</h2>
-    <p class="sub" style="margin:0">Baixe um arquivo <code>.json</code> com seus assuntos, tarefas, fotos, arquivos e lançamentos financeiros.</p>
+    <p class="sub" style="margin:0">Baixe um arquivo <code>.json</code> com seus assuntos, tarefas, fotos, arquivos, trades e lançamentos financeiros.</p>
     <div class="acts" style="justify-content:flex-start"><button class="btn pri" type="button" id="bx">Exportar arquivo (.json)</button></div>
     <label>Restaurar de um backup (substitui os dados atuais e envia à nuvem)<input type="file" id="rf" accept=".json,application/json"></label>
     <p id="bm" class="sub" style="margin:0" role="status"></p>
@@ -916,6 +940,8 @@ const mig=()=>{
   S.files=S.files||[];
   S.fin=S.fin||[];
   S.meta=S.meta||0;
+  S.trades=S.trades||[];
+  S.bancaIni=Number(S.bancaIni)||0;
   S.subs.forEach(s=>s.cats=s.cats||[]);
   S.tasks.forEach(t=>{t.cat=t.cat||'';t.photos=t.photos||[];t.subs=t.subs||[]});
 };
@@ -988,10 +1014,9 @@ async function saveFile(id){
   if(m)m.textContent='Arquivo baixado.';notify('Download concluído.');
 }
 
-const isFin=s=>/gasto|financ/i.test(s.name||'');
 const FC=['Alimentação','Moradia','Transporte','Saúde','Lazer','Educação','Contas fixas','Compras','Salário','Outros'];
 const PAYS=['Pix','Dinheiro','Débito','Crédito','Boleto','Outro'];
-const shiftM=n=>iso(new Date(+fm.slice(0,4),+fm.slice(5)-1+n,1)).slice(0,7);
+const shiftM=(base,n)=>iso(new Date(+base.slice(0,4),+base.slice(5)-1+n,1)).slice(0,7);
 
 function addFin(){
   const v=parseFloat($('#fa').value);
@@ -1074,7 +1099,7 @@ function finView(){
     <svg class="ch" viewBox="0 0 600 148" role="img" aria-label="Entradas e saídas por dia">
       <line x1="0" x2="600" y1="16" y2="16" stroke-dasharray="3 3" style="stroke:var(--line);opacity:.6"/>
       <line x1="0" x2="600" y1="70" y2="70" stroke-dasharray="3 3" style="stroke:var(--line);opacity:.6"/>
-      <line x1="0" x2="600" y1="124" y2="124" stroke-dasharray="3 3" style="stroke:var(--line)"/>
+      <line x1="0" x2="600" y1="124" y2="124" style="stroke:var(--line)"/>
       <text x="596" y="12" text-anchor="end" style="fill:var(--mute);font-size:9px">máx: ${brl(mx)}</text>
       ${bars}
     </svg>
@@ -1109,6 +1134,198 @@ function finView(){
       <button class="btn bad" type="button" data-fl="${x.id}" aria-label="Excluir lançamento">×</button>
     </div>`).join('')
     :'<div class="empty">Nenhum lançamento encontrado para este filtro.</div>'}
+  </div>`;
+}
+
+/* ================= MÓDULO DE TRADES (MINI ÍNDICE - WIN) ================= */
+const SETUPS=['Rompimento','Pullback','VWAP','Abertura','Ajuste','Tendência','Reversão','Outro'];
+
+function addTrade(){
+  const raw=Math.abs(parseFloat($('#trval').value));
+  if(!(raw>0)){$('#trval').focus();notify('Informe o valor em R$ do trade.');return}
+  const resType=$('#trres').value; // gain | loss
+  const val=Math.round((resType==='loss'?-raw:raw)*100)/100;
+  const date=$('#trdate').value||TODAY;
+  const ptsRaw=parseFloat($('#trpts').value);
+  const pts=isNaN(ptsRaw)?0:(resType==='loss'?-Math.abs(ptsRaw):Math.abs(ptsRaw));
+
+  S.trades.push({
+    id:uid(),
+    date,
+    asset:'WIN',
+    side:$('#trside').value,
+    cts:Math.max(1,parseInt($('#trcts').value,10)||1),
+    pts,
+    val,
+    setup:$('#trsetup').value.trim()||'Geral',
+    note:$('#trnote').value.trim()
+  });
+
+  tm=date.slice(0,7);
+  tsetup='';
+  save();
+  render();
+  notify(val>=0?'Gain registrado!':'Loss registrado.');
+  $('#trval')?.focus();
+}
+
+function tradesView(){
+  const Y=+tm.slice(0,4),Mo=+tm.slice(5),nd=new Date(Y,Mo,0).getDate();
+  const all=[...(S.trades||[])].sort((a,b)=>a.date===b.date?0:(a.date<b.date?-1:1));
+  const M=all.filter(x=>x.date.slice(0,7)===tm);
+
+  const bancaIni=Number(S.bancaIni)||0;
+  const acumTotal=all.reduce((a,x)=>a+x.val,0);
+  const patrimonioAtual=bancaIni+acumTotal;
+
+  const resMes=M.reduce((a,x)=>a+x.val,0);
+  const ptsMes=M.reduce((a,x)=>a+(Number(x.pts)||0),0);
+  const gains=M.filter(x=>x.val>0);
+  const losses=M.filter(x=>x.val<0);
+  const winRate=M.length?Math.round((gains.length/M.length)*100):0;
+  const avgGain=gains.length?gains.reduce((a,x)=>a+x.val,0)/gains.length:0;
+  const avgLoss=losses.length?Math.abs(losses.reduce((a,x)=>a+x.val,0)/losses.length):0;
+  const payoff=avgLoss>0?(avgGain/avgLoss).toFixed(2):(gains.length?'∞':'0.00');
+
+  /* Curva de capital histórica (Saldo Inicial + evolução trade a trade) */
+  const curvePts=[{label:'Início',val:bancaIni}];
+  let run=bancaIni;
+  all.forEach((t,idx)=>{
+    run=Math.round((run+t.val)*100)/100;
+    curvePts.push({label:`#${idx+1} (${t.date.slice(8)}/${t.date.slice(5,7)})`,val:run});
+  });
+
+  let equitySvg='';
+  if(curvePts.length>1){
+    const vals=curvePts.map(p=>p.val);
+    const minV=Math.min(...vals);
+    const maxV=Math.max(...vals);
+    const span=Math.max(1,maxV-minV);
+    const padX=14,padY=18,W=600,H=155;
+    const coords=curvePts.map((p,i)=>{
+      const x=padX+(i/(curvePts.length-1))*(W-padX*2);
+      const y=H-padY-((p.val-minV)/span)*(H-padY*2);
+      return [x,y,p];
+    });
+    const poly=coords.map(c=>`${c[0].toFixed(1)},${c[1].toFixed(1)}`).join(' ');
+    const area=`${coords[0][0].toFixed(1)},${H-padY} ${poly} ${coords[coords.length-1][0].toFixed(1)},${H-padY}`;
+    const lineCol=patrimonioAtual>=bancaIni?'var(--ok)':'var(--bad)';
+    const baseY=H-padY-((bancaIni-minV)/span)*(H-padY*2);
+
+    equitySvg=`<svg class="ch" viewBox="0 0 ${W} ${H+14}" role="img" aria-label="Curva de capital acumulada">
+      <line x1="${padX}" x2="${W-padX}" y1="${baseY.toFixed(1)}" y2="${baseY.toFixed(1)}" stroke-dasharray="4 4" style="stroke:var(--mute);opacity:.55"/>
+      <polygon points="${area}" style="fill:${lineCol};opacity:.12"/>
+      <polyline fill="none" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" points="${poly}" style="stroke:${lineCol}"/>
+      ${coords.length<=35?coords.map(c=>`<circle cx="${c[0].toFixed(1)}" cy="${c[1].toFixed(1)}" r="3.2" style="fill:${lineCol}"><title>${esc(c[2].label)}: ${brl(c[2].val)}</title></circle>`).join(''):''}
+      <text x="${W-padX}" y="12" text-anchor="end" style="fill:var(--mute);font-size:10px">Topo: ${brl(maxV)} · Base: ${brl(bancaIni)}</text>
+      <text x="${padX}" y="${H+8}" style="fill:var(--mute);font-size:10px">Início (${brl(bancaIni)})</text>
+      <text x="${W-padX}" y="${H+8}" text-anchor="end" style="fill:var(--mute);font-size:10px">Atual (${brl(patrimonioAtual)})</text>
+    </svg>`;
+  }else{
+    equitySvg='<div class="empty">Lance seu primeiro trade de Mini Índice para visualizar a curva de evolução do patrimônio.</div>';
+  }
+
+  /* Barras dia a dia no mês selecionado */
+  const dayNet=Array.from({length:nd},()=>0);
+  M.forEach(x=>{dayNet[+x.date.slice(8)-1]+=x.val});
+  const maxAbs=Math.max(1,...dayNet.map(v=>Math.abs(v)));
+  const bw=600/nd,midY=68;
+  const dayBars=dayNet.map((v,i)=>{
+    if(!v)return ((i+1)%5===0||i===0?`<text x="${i*bw+bw/2}" y="142" text-anchor="middle" style="fill:var(--mute);font-size:10px">${i+1}</text>`:'');
+    const h=Math.max(3,(Math.abs(v)/maxAbs)*50);
+    const y=v>=0?midY-h:midY;
+    const col=v>=0?'var(--ok)':'var(--bad)';
+    return `<rect x="${i*bw+bw*.16}" y="${y}" width="${bw*.68}" height="${h}" rx="2" style="fill:${col}"><title>Dia ${i+1}: ${sbrl(v)}</title></rect>`+
+           ((i+1)%5===0||i===0?`<text x="${i*bw+bw/2}" y="142" text-anchor="middle" style="fill:var(--mute);font-size:10px">${i+1}</text>`:'');
+  }).join('');
+
+  /* Desempenho por setup no mês */
+  const bySetup={};
+  M.forEach(x=>{bySetup[x.setup]=(bySetup[x.setup]||0)+x.val});
+  const setupEntries=Object.entries(bySetup).sort((a,b)=>b[1]-a[1]);
+  const maxSetupAbs=Math.max(1,...setupEntries.map(x=>Math.abs(x[1])));
+  const allSetups=[...new Set(SETUPS.concat(all.map(x=>x.setup)))];
+  const filteredTrades=M.filter(x=>!tsetup||x.setup===tsetup).slice().reverse();
+
+  return `
+  <div class="pn">
+    <h3>Banca & Acumulado Geral (WIN)</h3>
+    <div class="ff" style="margin-bottom:14px">
+      <label>Saldo inicial da banca (R$)<input id="tbanca" type="number" step="0.01" value="${S.bancaIni||''}" placeholder="Ex: 2000,00"></label>
+    </div>
+    <div class="kp" style="margin-bottom:0">
+      <div><span>Saldo Inicial</span><b>${brl(bancaIni)}</b></div>
+      <div><span>Acumulado Total</span><b style="color:${acumTotal>=0?'var(--ok)':'var(--bad)'}">${sbrl(acumTotal)}</b></div>
+      <div><span>Patrimônio Atual</span><b style="color:${patrimonioAtual>=bancaIni?'var(--ok)':'var(--bad)'}">${brl(patrimonioAtual)}</b></div>
+      <div><span>Total de Operações</span><b>${all.length}</b></div>
+    </div>
+  </div>
+
+  <div class="pn"><h3>Registrar trade (Mini Índice - WIN)</h3><div class="ff">
+    <label>Resultado<select id="trres"><option value="gain">Gain (+)</option><option value="loss">Loss (−)</option></select></label>
+    <label>Valor líquido (R$)<input id="trval" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0,00"></label>
+    <label>Direção<select id="trside"><option value="Compra">Compra</option><option value="Venda">Venda</option></select></label>
+    <label>Contratos<input id="trcts" type="number" min="1" step="1" value="1"></label>
+    <label>Pontos (opcional)<input id="trpts" type="number" step="5" placeholder="Ex: 250"></label>
+    <label>Estratégia / Setup<input id="trsetup" list="tsetuplist" placeholder="Ex: Pullback"><datalist id="tsetuplist">${allSetups.map(s=>`<option value="${esc(s)}">`).join('')}</datalist></label>
+    <label>Data<input id="trdate" type="date" value="${TODAY}"></label>
+    <label>Observação<input id="trnote" placeholder="Opcional"></label>
+    <button class="btn pri" type="button" id="tadd">Lançar trade</button>
+  </div></div>
+
+  <div class="pn"><h3>Curva de Capital (Patrimônio Acumulado)</h3>
+    ${equitySvg}
+  </div>
+
+  <div class="head" style="align-items:center;margin-bottom:12px">
+    <button class="tab" type="button" data-tm="-1" aria-label="Mês anterior">‹</button>
+    <h2 style="text-transform:capitalize">${new Date(Y,Mo-1,1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}</h2>
+    <button class="tab" type="button" data-tm="1" aria-label="Próximo mês">›</button>
+  </div>
+
+  <div class="kp">
+    <div><span>Resultado do Mês</span><b style="color:${resMes>=0?'var(--ok)':'var(--bad)'}">${sbrl(resMes)}</b></div>
+    <div><span>Taxa de Acerto</span><b>${winRate}% <small style="font-size:12px;color:var(--mute)">(${gains.length}G / ${losses.length}L)</small></b></div>
+    <div><span>Payoff (Média G/L)</span><b>${payoff}</b></div>
+    <div><span>Saldo de Pontos</span><b style="color:${ptsMes>=0?'var(--ok)':'var(--bad)'}">${ptsMes>0?'+':''}${ptsMes} pts</b></div>
+  </div>
+
+  <div class="pn"><h3>Resultado diário no mês</h3>
+    <div class="lg"><span><i style="background:var(--ok)"></i>Dia positivo</span><span><i style="background:var(--bad)"></i>Dia negativo</span></div>
+    <svg class="ch" viewBox="0 0 600 148" role="img" aria-label="Resultado diário de trades no mês">
+      <line x1="0" x2="600" y1="${midY}" y2="${midY}" style="stroke:var(--line)"/>
+      <text x="596" y="12" text-anchor="end" style="fill:var(--mute);font-size:9px">amplitude máx: ±${brl(maxAbs)}</text>
+      ${dayBars}
+    </svg>
+  </div>
+
+  <div class="pn"><h3>Desempenho por Estratégia / Setup</h3>
+    ${setupEntries.length?setupEntries.map(([st,v])=>`<div class="cr">
+      <div class="meta"><span>${esc(st)}</span><b style="color:${v>=0?'var(--ok)':'var(--bad)'}">${sbrl(v)}</b></div>
+      <div class="bar"><i style="width:${Math.round((Math.abs(v)/maxSetupAbs)*100)}%;background:${v>=0?'var(--ok)':'var(--bad)'}"></i></div>
+    </div>`).join(''):'<div class="empty">Nenhum trade registrado neste mês.</div>'}
+  </div>
+
+  <div class="pn">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      <h3 style="margin:0">Histórico de Trades do Mês</h3>
+      <div class="tabs" style="margin-left:0">
+        <button class="tab ${!tsetup?'on':''}" data-tsetup="">Todos</button>
+        ${[...new Set(M.map(x=>x.setup))].map(st=>`<button class="tab ${tsetup===st?'on':''}" data-tsetup="${esc(st)}">${esc(st)}</button>`).join('')}
+      </div>
+    </div>
+    ${filteredTrades.length?filteredTrades.map(x=>`<div class="task" style="align-items:center">
+      <div class="meta" style="min-width:44px;margin:0">${x.date.slice(8)}/${x.date.slice(5,7)}</div>
+      <div class="tb">
+        <div class="tt">WIN · ${esc(x.side)} (${x.cts} ct${x.cts>1?'s':''}) ${x.pts?`· ${x.pts>0?'+':''}${x.pts} pts`:''}</div>
+        <div class="meta">
+          <span class="pill-tag">${esc(x.setup)}</span>
+          ${x.note?`<span>${esc(x.note)}</span>`:''}
+        </div>
+      </div>
+      <b style="color:${x.val>=0?'var(--ok)':'var(--bad)'};white-space:nowrap">${sbrl(x.val)}</b>
+      <button class="btn bad" type="button" data-tdel="${x.id}" aria-label="Excluir trade">×</button>
+    </div>`).join(''):'<div class="empty">Nenhum trade encontrado para este filtro.</div>'}
   </div>`;
 }
 
