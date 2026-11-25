@@ -233,6 +233,17 @@ dialog::backdrop{background:rgba(8,16,22,.65);backdrop-filter:blur(4px)}
 .cr .meta{justify-content:space-between}
 svg.ch{width:100%;height:auto;display:block}
 
+/* Teste Físico */
+.taf-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:16px;margin-bottom:18px;align-items:start}
+.taf-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.taf-metric-pill{font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:999px;background:var(--acc-soft);color:var(--acc)}
+.taf-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.taf-box{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:10px;padding:9px 10px}
+.taf-box span{display:block;font-size:11px;font-weight:700;text-transform:uppercase;color:var(--mute)}
+.taf-box b{font-family:'Bricolage Grotesque',sans-serif;font-size:15.5px;margin-top:2px;display:block}
+.taf-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:8px;align-items:end;margin-bottom:12px}
+.taf-form label{display:grid;gap:4px;font-size:11.5px;font-weight:600;color:var(--mute)}
+
 #toast{
   position:fixed;right:18px;bottom:18px;z-index:999;max-width:min(360px,90vw);
   background:var(--ink);color:var(--bg);padding:11px 15px;border-radius:12px;
@@ -253,6 +264,7 @@ svg.ch{width:100%;height:auto;display:block}
   .toolbar{grid-template-columns:1fr}
   .row{grid-template-columns:1fr}
   .tabs{margin-left:0}
+  .taf-summary{grid-template-columns:1fr}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -289,13 +301,14 @@ function defaultState(){
     theme:'auto',
     accent:'',
     updatedAt:0,
-    subs:['Polícia Militar','Projeto Theik','Projeto Theik House','Gastos Pessoais','PC Gamer'].map((n,i)=>({id:uid(),name:n,color:COL[i],cats:[]})),
+    subs:['Polícia Militar','Projeto Theik','Projeto Theik House','Gastos Pessoais','PC Gamer','Teste Físico'].map((n,i)=>({id:uid(),name:n,color:COL[i%COL.length],cats:[]})),
     tasks:[],
     files:[],
     fin:[],
     meta:0,
     trades:[],
-    bancaIni:0
+    bancaIni:0,
+    tafLogs:[]
   };
 }
 
@@ -320,6 +333,210 @@ function setSyncStatus(st,lbl){
   const dot=$('.sync-dot'),txt=$('.sync-txt');
   if(dot){dot.className='sync-dot'+(st==='busy'?' busy':st==='err'?' err':'')}
   if(txt)txt.textContent=lbl;
+}
+
+/* ================= TESTE FÍSICO ================= */
+const TAF_EXERCISES=[
+  {key:'corrida',label:'Corrida',kind:'run',metricLabel:'KM em minutos',accent:'var(--acc)'},
+  {key:'abdominal',label:'Abdominal',kind:'reps',metricLabel:'Repetições',accent:'var(--ok)'},
+  {key:'flexao',label:'Flexão',kind:'reps',metricLabel:'Repetições',accent:'#6B5BD2'},
+  {key:'barra_fixa',label:'Barra Fixa',kind:'reps',metricLabel:'Repetições',accent:'#D08A12'}
+];
+
+function fmtMinToClock(mins){
+  const m=Number(mins)||0;
+  const whole=Math.floor(m);
+  const secs=Math.round((m-whole)*60);
+  const adjM=secs===60?whole+1:whole;
+  const adjS=secs===60?0:secs;
+  return `${adjM}'${String(adjS).padStart(2,'0')}"`;
+}
+
+function formatRunSummary(entry){
+  const km=Number(entry.km)||0;
+  const mins=Number(entry.mins)||0;
+  const pace=km>0&&mins>0?(mins/km):0;
+  return `${km.toFixed(2)} km em ${mins} min`+(pace>0?` (${fmtMinToClock(pace)}/km)`:'');
+}
+
+function addTafEntry(exKey){
+  const ex=TAF_EXERCISES.find(x=>x.key===exKey);
+  if(!ex)return;
+
+  const date=$(`#taf-date-${exKey}`)?.value||TODAY;
+  const note=$(`#taf-note-${exKey}`)?.value.trim()||'';
+
+  if(ex.kind==='run'){
+    const km=parseFloat($(`#taf-km-${exKey}`)?.value);
+    const mins=parseFloat($(`#taf-min-${exKey}`)?.value);
+    if(!(km>0)||!(mins>0)){
+      notify('Informe a distância em km e o tempo em minutos.');
+      return;
+    }
+    S.tafLogs.push({
+      id:uid(),
+      exercise:exKey,
+      date,
+      km:Math.round(km*100)/100,
+      mins:Math.round(mins*100)/100,
+      note
+    });
+  }else{
+    const reps=parseInt($(`#taf-reps-${exKey}`)?.value,10);
+    if(!(reps>0)){
+      notify(`Informe a quantidade de repetições em ${ex.label}.`);
+      return;
+    }
+    S.tafLogs.push({
+      id:uid(),
+      exercise:exKey,
+      date,
+      reps,
+      note
+    });
+  }
+
+  save();
+  render();
+  notify(`${ex.label} registrado!`);
+}
+
+function buildEvolutionSvg(items,ex){
+  if(items.length<2){
+    return '<div class="empty" style="padding:14px">Adicione pelo menos 2 registros para visualizar a linha de evolução.</div>';
+  }
+  const vals=items.map(it=>ex.kind==='run'
+    ?(it.km>0&&it.mins>0?+(it.km/it.mins).toFixed(4):0)
+    :Number(it.reps)||0
+  );
+  const minV=Math.min(...vals),maxV=Math.max(...vals);
+  const span=Math.max(0.0001,maxV-minV);
+  const W=460,H=96,px=10,py=12;
+
+  const pts=vals.map((v,i)=>{
+    const x=px+(i/(vals.length-1))*(W-px*2);
+    const y=H-py-((v-minV)/span)*(H-py*2);
+    return [x,y,items[i],v];
+  });
+
+  const poly=pts.map(p=>`${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
+  const tipLabel=(it,v)=>ex.kind==='run'
+    ?`${it.date.slice(8)}/${it.date.slice(5,7)} · ${formatRunSummary(it)}`
+    :`${it.date.slice(8)}/${it.date.slice(5,7)} · ${v} repetições`;
+
+  return `<svg class="ch" viewBox="0 0 ${W} ${H+14}" role="img" aria-label="Evolução de ${esc(ex.label)}">
+    <line x1="${px}" x2="${W-px}" y1="${H-py}" y2="${H-py}" style="stroke:var(--line)"/>
+    <polyline fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" points="${poly}" style="stroke:${ex.accent}"/>
+    ${pts.map(p=>`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3.4" style="fill:${ex.accent}"><title>${esc(tipLabel(p[2],p[3]))}</title></circle>`).join('')}
+    <text x="${px}" y="${H+10}" style="fill:var(--mute);font-size:9.5px">${items[0].date.slice(8)}/${items[0].date.slice(5,7)}</text>
+    <text x="${W-px}" y="${H+10}" text-anchor="end" style="fill:var(--mute);font-size:9.5px">${items[items.length-1].date.slice(8)}/${items[items.length-1].date.slice(5,7)}</text>
+  </svg>`;
+}
+
+function renderTafBlock(ex){
+  const list=(S.tafLogs||[])
+    .filter(x=>x.exercise===ex.key)
+    .sort((a,b)=>a.date===b.date?0:(a.date<b.date?-1:1));
+
+  const last=list[list.length-1]||null;
+  const prev=list.length>1?list[list.length-2]:null;
+
+  let bestText='—';
+  let lastText='—';
+  let diffText='—';
+  let diffColor='var(--mute)';
+
+  if(ex.kind==='run'){
+    if(list.length){
+      const bestRun=list.reduce((best,curIt)=>{
+        const curSpeed=curIt.mins>0?curIt.km/curIt.mins:0;
+        const bestSpeed=best.mins>0?best.km/best.mins:0;
+        return curSpeed>bestSpeed?curIt:best;
+      },list[0]);
+      bestText=`${bestRun.km} km / ${bestRun.mins} min`;
+      lastText=`${last.km} km / ${last.mins} min`;
+      if(prev){
+        const dKm=+(last.km-prev.km).toFixed(2);
+        const dMin=+(last.mins-prev.mins).toFixed(1);
+        const signKm=dKm>0?'+':'';
+        const signMin=dMin>0?'+':'';
+        diffText=`${signKm}${dKm} km · ${signMin}${dMin} min`;
+        diffColor=dKm>=0&&dMin<=0?'var(--ok)':(dKm<0&&dMin>0?'var(--bad)':'var(--acc)');
+      }
+    }
+  }else{
+    if(list.length){
+      const bestReps=Math.max(...list.map(x=>Number(x.reps)||0));
+      bestText=`${bestReps} reps`;
+      lastText=`${last.reps} reps`;
+      if(prev){
+        const diff=(Number(last.reps)||0)-(Number(prev.reps)||0);
+        diffText=(diff>0?'+':'')+diff+' reps';
+        diffColor=diff>0?'var(--ok)':diff<0?'var(--bad)':'var(--mute)';
+      }
+    }
+  }
+
+  const formFields=ex.kind==='run'
+    ?`<label>Distância (km)<input id="taf-km-${ex.key}" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="Ex: 2.4"></label>
+      <label>Tempo (min)<input id="taf-min-${ex.key}" type="number" step="0.1" min="0.1" inputmode="decimal" placeholder="Ex: 12.5"></label>
+      <label>Data<input id="taf-date-${ex.key}" type="date" value="${TODAY}"></label>
+      <label>Obs.<input id="taf-note-${ex.key}" placeholder="Opcional"></label>`
+    :`<label>Repetições<input id="taf-reps-${ex.key}" type="number" min="1" step="1" inputmode="numeric" placeholder="Ex: 35"></label>
+      <label>Data<input id="taf-date-${ex.key}" type="date" value="${TODAY}"></label>
+      <label>Obs.<input id="taf-note-${ex.key}" placeholder="Opcional"></label>`;
+
+  const historyHtml=list.length
+    ?list.slice().reverse().slice(0,6).map(it=>{
+      const desc=ex.kind==='run'?formatRunSummary(it):`${it.reps} repetições`;
+      return `<div class="task" style="align-items:center;margin-bottom:6px;padding:9px 12px">
+        <div class="meta" style="min-width:46px;margin:0">${it.date.slice(8)}/${it.date.slice(5,7)}</div>
+        <div class="tb">
+          <div class="tt" style="font-size:14px">${esc(desc)}</div>
+          ${it.note?`<div class="meta"><span>${esc(it.note)}</span></div>`:''}
+        </div>
+        <button class="btn bad" type="button" data-tafdel="${it.id}" style="min-height:28px;padding:2px 8px;font-size:12px" aria-label="Excluir registro">×</button>
+      </div>`;
+    }).join('')
+    :'<div class="empty" style="padding:14px">Nenhum registro ainda em '+esc(ex.label)+'.</div>';
+
+  return `
+    <div class="pn" style="margin-bottom:0">
+      <div class="taf-top">
+        <h3 style="margin:0">${esc(ex.label)}</h3>
+        <span class="taf-metric-pill">${esc(ex.metricLabel)}</span>
+      </div>
+
+      <div class="taf-summary">
+        <div class="taf-box"><span>Último</span><b>${esc(lastText)}</b></div>
+        <div class="taf-box"><span>Melhor marca</span><b>${esc(bestText)}</b></div>
+        <div class="taf-box"><span>Vs. anterior</span><b style="color:${diffColor}">${esc(diffText)}</b></div>
+      </div>
+
+      <div class="taf-form">
+        ${formFields}
+        <button class="btn pri" type="button" data-tafadd="${ex.key}">Registrar</button>
+      </div>
+
+      <div style="margin-bottom:10px">${buildEvolutionSvg(list,ex)}</div>
+      <div>${historyHtml}</div>
+    </div>
+  `;
+}
+
+function tafView(){
+  const totalLogs=(S.tafLogs||[]).length;
+  return `
+    <div class="kp">
+      <div><span>Total de Registros</span><b>${totalLogs}</b></div>
+      <div><span>Modalidades</span><b>4 blocos</b></div>
+      <div><span>Corrida</span><b>KM em minutos</b></div>
+      <div><span>Força / Resistência</span><b>Repetições</b></div>
+    </div>
+    <div class="taf-grid">
+      ${TAF_EXERCISES.map(renderTafBlock).join('')}
+    </div>
+  `;
 }
 
 /* ================= GOOGLE DRIVE & ANEXOS DE TAREFA ================= */
@@ -463,8 +680,10 @@ function save(){
 /* ================= DETECTORES DE MÓDULOS ================= */
 const isFin=s=>/gasto|financ/i.test(s?.name||'');
 const isTrade=s=>/theik$/i.test((s?.name||'').trim())||/^projeto theik$/i.test((s?.name||'').trim());
+const isTaf=s=>/teste\s*f[ií]sico|\btaf\b/i.test(s?.name||'');
 
 function defaultModeFor(s){
+  if(isTaf(s))return 'taf';
   if(isTrade(s))return 'trades';
   if(isFin(s))return 'fin';
   return 'tarefas';
@@ -548,6 +767,7 @@ function homeView(){
 
   const tradeSub=S.subs.find(isTrade);
   const finSub=S.subs.find(isFin);
+  const tafSub=S.subs.find(isTaf);
   const focusList=[...lateTasks,...todayTasks].sort(cmp).slice(0,5);
 
   return `
@@ -555,6 +775,7 @@ function homeView(){
       <h1>Início</h1>
       <div class="tabs">
         <button class="tab" type="button" data-v="hoje">Ver Hoje</button>
+        ${tafSub?`<button class="tab" type="button" data-v="${tafSub.id}" data-force-mode="taf">Teste Físico</button>`:''}
         ${finSub?`<button class="tab" type="button" data-v="${finSub.id}" data-force-mode="fin">Financeiro</button>`:`<button class="tab" type="button" data-v="gastos">Gastos por mês</button>`}
         ${tradeSub?`<button class="tab" type="button" data-v="${tradeSub.id}" data-force-mode="trades">Trades WIN</button>`:''}
       </div>
@@ -677,6 +898,7 @@ function render(){
     m.innerHTML=
       `<div class="head"><span class="dot" style="width:16px;height:16px;border-radius:5px;background:${s.color};margin-bottom:6px"></span><h1>${esc(s.name)}</h1>`+
       `<div class="tabs">`+
+      `${isTaf(s)?`<button class="tab ${mode==='taf'?'on':''}" data-m="taf">Teste Físico</button>`:''}`+
       `${isTrade(s)?`<button class="tab ${mode==='trades'?'on':''}" data-m="trades">Trades WIN</button>`:''}`+
       `<button class="tab ${mode==='tarefas'?'on':''}" data-m="tarefas">Tarefas</button>`+
       `<button class="tab ${mode==='arquivos'?'on':''}" data-m="arquivos">Arquivos</button>`+
@@ -684,7 +906,9 @@ function render(){
       `<button class="tab" id="es">Editar</button></div></div>`+
       `<p class="sub">${T.filter(t=>t.done).length} de ${T.length} concluídas${tot?' · Total '+brl(tot):''}</p>`;
 
-    if(mode==='trades'){
+    if(mode==='taf'){
+      m.innerHTML+=tafView();
+    }else if(mode==='trades'){
       m.innerHTML+=tradesView();
     }else if(mode==='fin'){
       m.innerHTML+=finView();
@@ -909,6 +1133,12 @@ document.addEventListener('click',async e=>{
     currentUser=null;S=defaultState();updateAuthUI();notify('Sessão encerrada.');
   }
   else if(id==='syncnow'){await syncAfterLogin();notify('Sincronização concluída!')}
+  else if(g('data-tafadd')){addTafEntry(g('data-tafadd').dataset.tafadd)}
+  else if(g('data-tafdel')){
+    const b=g('data-tafdel'),tid=b.dataset.tafdel;
+    if(b.dataset.arm){S.tafLogs=S.tafLogs.filter(x=>x.id!==tid);save();render();notify('Registro removido.')}
+    else{b.dataset.arm=1;b.textContent='Confirmar'}
+  }
   else if(g('data-th')){
     S.theme=g('data-th').dataset.th;
     save();render();
@@ -1079,7 +1309,7 @@ function gastos(){
 function openBk(){
   $('#dk').innerHTML=`<div class="f">
     <h2>Backup dos dados</h2>
-    <p class="sub" style="margin:0">Baixe um arquivo <code>.json</code> com seus assuntos, tarefas, anexos, arquivos, links do Drive, trades e lançamentos financeiros.</p>
+    <p class="sub" style="margin:0">Baixe um arquivo <code>.json</code> com seus assuntos, tarefas, anexos, arquivos, links do Drive, trades, teste físico e lançamentos financeiros.</p>
     <div class="acts" style="justify-content:flex-start"><button class="btn pri" type="button" id="bx">Exportar arquivo (.json)</button></div>
     <label>Restaurar de um backup (substitui os dados atuais e envia à nuvem)<input type="file" id="rf" accept=".json,application/json"></label>
     <p id="bm" class="sub" style="margin:0" role="status"></p>
@@ -1124,6 +1354,7 @@ const mig=()=>{
   S.meta=S.meta||0;
   S.trades=S.trades||[];
   S.bancaIni=Number(S.bancaIni)||0;
+  S.tafLogs=S.tafLogs||[];
   S.subs.forEach(s=>s.cats=s.cats||[]);
   S.tasks.forEach(t=>{
     t.cat=t.cat||'';
