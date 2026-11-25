@@ -89,7 +89,7 @@ main{padding:28px clamp(18px,3.2vw,44px) 64px;width:100%;min-width:0}
 .tab,.btn{
   border:1px solid var(--line);background:var(--panel);border-radius:10px;
   padding:8px 13px;min-height:36px;font-size:13.5px;font-weight:500;
-  display:inline-flex;align-items:center;justify-content:center;gap:6px
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;text-decoration:none
 }
 .tab:hover,.btn:hover{border-color:var(--mute);background:var(--panel-2)}
 .tab.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
@@ -167,6 +167,9 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc);outline:none;box
 .pdf-badge{
   background:var(--bad);color:#fff;font-size:10px;font-weight:700;padding:2px 5px;border-radius:5px;flex:none
 }
+.drive-badge{
+  background:var(--acc);color:var(--accink);font-size:10px;font-weight:700;padding:2px 5px;border-radius:5px;flex:none
+}
 .gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
 .gal button{padding:0;border:0;background:none;position:relative;border-radius:10px;overflow:hidden;box-shadow:var(--shadow)}
 .gal img{width:100%;aspect-ratio:1;border:0}
@@ -194,7 +197,7 @@ dialog::backdrop{background:rgba(8,16,22,.65);backdrop-filter:blur(4px)}
 .pv>div{position:relative}
 .pv img{width:74px;height:74px;object-fit:cover;border-radius:9px;border:1px solid var(--line)}
 .pv .pv-pdf{
-  width:136px;height:74px;border-radius:9px;border:1px solid var(--line);background:var(--panel-2);
+  width:146px;height:74px;border-radius:9px;border:1px solid var(--line);background:var(--panel-2);
   padding:8px;display:flex;flex-direction:column;justify-content:space-between;font-size:11px;color:var(--ink)
 }
 .pv .pv-pdf span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
@@ -218,6 +221,7 @@ dialog::backdrop{background:rgba(8,16,22,.65);backdrop-filter:blur(4px)}
   flex:none;width:42px;height:42px;border-radius:10px;background:var(--panel-2);
   border:1px solid var(--line);display:grid;place-items:center;font:700 11px 'Bricolage Grotesque',sans-serif;text-transform:uppercase
 }
+.fi.drive{background:var(--acc-soft);border-color:color-mix(in srgb,var(--acc) 45%,var(--line));color:var(--acc)}
 .fn{flex:1;min-width:140px}
 .fn b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
@@ -327,19 +331,42 @@ function setSyncStatus(st,lbl){
   if(txt)txt.textContent=lbl;
 }
 
-/* ================= ANEXOS DE TAREFA (IMAGENS + PDF) ================= */
+/* ================= GOOGLE DRIVE & ANEXOS DE TAREFA ================= */
+function parseDriveUrl(raw){
+  const trimmed=String(raw||'').trim();
+  if(!trimmed)return null;
+  const withProto=/^https?:\/\//i.test(trimmed)?trimmed:'https://'+trimmed;
+  try{
+    const u=new URL(withProto);
+    if(u.protocol!=='https:'&&u.protocol!=='http:')return null;
+    const host=u.hostname.toLowerCase();
+    const isDriveHost=
+      host==='drive.google.com'||
+      host.endsWith('.drive.google.com')||
+      host==='docs.google.com'||
+      host.endsWith('.docs.google.com')||
+      host==='sheets.google.com'||
+      host==='slides.google.com';
+    return {url:u.href,host,isDriveHost};
+  }catch(e){
+    return null;
+  }
+}
+
 function normAtt(item){
   if(typeof item==='string'){
-    return {type:'image/jpeg',name:'Imagem',data:item};
+    return {type:'image/jpeg',name:'Imagem',data:item,url:''};
   }
   return {
     type:item?.type||'image/jpeg',
     name:item?.name||'Anexo',
-    data:item?.data||''
+    data:item?.data||'',
+    url:item?.url||''
   };
 }
-const isPdfAtt=item=>normAtt(item).type==='application/pdf'||/\.pdf$/i.test(normAtt(item).name);
-const isImgAtt=item=>!isPdfAtt(item);
+const isDriveAtt=item=>normAtt(item).type==='drive/link'||Boolean(normAtt(item).url);
+const isPdfAtt=item=>!isDriveAtt(item)&&(normAtt(item).type==='application/pdf'||/\.pdf$/i.test(normAtt(item).name));
+const isImgAtt=item=>!isDriveAtt(item)&&!isPdfAtt(item);
 
 function openPdfData(dataUrl,name='documento.pdf'){
   const blob=d2b(dataUrl);
@@ -533,11 +560,11 @@ async function processTaskAttachment(f){
     }
     const data=await rd(f);
     if(!data)return null;
-    return {type:'application/pdf',name:f.name,data};
+    return {type:'application/pdf',name:f.name,data,url:''};
   }
   const imgData=await shrink(f);
   if(!imgData)return null;
-  return {type:'image/jpeg',name:f.name||'Imagem',data:imgData};
+  return {type:'image/jpeg',name:f.name||'Imagem',data:imgData,url:''};
 }
 
 const cmp=(a,b)=>(a.date||'9')+(a.time||'99')<(b.date||'9')+(b.time||'99')?-1:1;
@@ -547,8 +574,11 @@ function matchTask(t){
   if(fstatus==='done'&&!t.done)return false;
   if(qtext){
     const q=qtext.toLowerCase();
-    const attNames=(t.photos||[]).map(x=>normAtt(x).name);
-    const hay=[t.title,t.note,t.cat,sub(t.sub).name,...(t.subs||[]).map(x=>x.text),...attNames].join(' ').toLowerCase();
+    const attMeta=(t.photos||[]).flatMap(x=>{
+      const a=normAtt(x);
+      return [a.name,a.url];
+    });
+    const hay=[t.title,t.note,t.cat,sub(t.sub).name,...(t.subs||[]).map(x=>x.text),...attMeta].join(' ').toLowerCase();
     if(!hay.includes(q))return false;
   }
   return true;
@@ -734,7 +764,7 @@ const quick=()=>`<div class="quick"><input id="q" value="${esc(qtext)}" placehol
 
 function filterBar(showStatus){
   return `<div class="toolbar">
-    <input id="search" type="search" value="${esc(qtext)}" placeholder="Buscar por título, anotação, categoria, anexo ou subtarefa..." aria-label="Buscar tarefas">
+    <input id="search" type="search" value="${esc(qtext)}" placeholder="Buscar por título, anotação, categoria, anexo, link do Drive ou subtarefa..." aria-label="Buscar tarefas">
     ${showStatus?`<div class="tabs" style="margin-left:0">
       <button class="tab ${fstatus==='all'?'on':''}" data-st="all">Todas</button>
       <button class="tab ${fstatus==='open'?'on':''}" data-st="open">Pendentes</button>
@@ -747,6 +777,9 @@ function renderTaskAttThumbs(photos){
   const list=(photos||[]).slice(0,4).map(normAtt);
   if(!list.length)return '';
   return '<div class="th">'+list.map(a=>{
+    if(isDriveAtt(a)){
+      return `<span class="pdf-chip" title="${esc(a.name)} · ${esc(a.url)}"><span class="drive-badge">DRIVE</span><span>${esc(a.name)}</span></span>`;
+    }
     if(isPdfAtt(a)){
       return `<span class="pdf-chip" title="${esc(a.name)}"><span class="pdf-badge">PDF</span><span>${esc(a.name)}</span></span>`;
     }
@@ -792,6 +825,22 @@ function addQuick(){
   save();render();notify('Tarefa adicionada.');$('#q')?.focus();
 }
 
+function addDriveLinkToTask(){
+  const urlInp=$('#tdriveurl');
+  const nameInp=$('#tdrivename');
+  const parsed=parseDriveUrl(urlInp?.value);
+  if(!parsed){
+    urlInp?.focus();
+    notify('Cole um link válido do Google Drive.');
+    return;
+  }
+  const label=(nameInp?.value||'').trim()||(parsed.isDriveHost?'Arquivo no Google Drive':parsed.host);
+  grab();
+  cur.photos.push({type:'drive/link',name:label,data:'',url:parsed.url});
+  drawT();
+  notify('Link do Drive anexado à tarefa.');
+}
+
 function openT(id){
   const t=S.tasks.find(x=>x.id===id);
   if(!t)return;
@@ -831,9 +880,27 @@ function drawT(){
       </div>
     </div>
     <label>Anotações<textarea id="tn" rows="3">${esc(cur.note)}</textarea></label>
-    <label>Fotos ou PDFs (PDF até 5 MB)<input type="file" id="tf" accept="image/*,application/pdf,.pdf" multiple></label>
+    <div>
+      <label style="margin-bottom:6px">Vincular link do Google Drive</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:6px">
+        <input id="tdriveurl" type="url" placeholder="https://drive.google.com/..." style="padding:8px 10px;font-size:13.5px">
+        <input id="tdrivename" placeholder="Nome (opcional)" style="padding:8px 10px;font-size:13.5px">
+        <button class="btn" type="button" id="tdriveadd">Vincular</button>
+      </div>
+    </div>
+    <label>Fotos ou PDFs locais (PDF até 5 MB)<input type="file" id="tf" accept="image/*,application/pdf,.pdf" multiple></label>
     <div class="pv">${(cur.photos||[]).map((raw,i)=>{
       const a=normAtt(raw);
+      if(isDriveAtt(a)){
+        return `<div>
+          <div class="pv-pdf" title="${esc(a.name)} · ${esc(a.url)}">
+            <span class="drive-badge" style="align-self:flex-start">DRIVE</span>
+            <span>${esc(a.name)}</span>
+            <a class="btn" href="${esc(a.url)}" target="_blank" rel="noopener" style="padding:2px 7px;min-height:24px;font-size:11px;align-self:flex-start">Abrir</a>
+          </div>
+          <button type="button" data-rp="${i}" aria-label="Remover anexo">×</button>
+        </div>`;
+      }
       if(isPdfAtt(a)){
         return `<div>
           <div class="pv-pdf" title="${esc(a.name)}">
@@ -945,6 +1012,8 @@ document.addEventListener('click',async e=>{
     if(t){t.done=!t.done;save();render();notify(t.done?'Tarefa concluída!':'Tarefa reaberta.')}
   }
   else if(g('data-t')){openT(g('data-t').dataset.t)}
+  else if(id==='tdriveadd'){addDriveLinkToTask()}
+  else if(id==='fdriveadd'){addDriveLinkToFiles()}
   else if(g('data-openpdf')){
     const idx=+g('data-openpdf').dataset.openpdf;
     const a=normAtt(cur?.photos?.[idx]);
@@ -1044,6 +1113,14 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Enter'&&e.target.id==='q')addQuick();
   if(e.key==='Enter'&&e.target.id==='fa')addFin();
   if(e.key==='Enter'&&e.target.id==='trval')addTrade();
+  if(e.key==='Enter'&&e.target.id==='tdriveurl'){
+    e.preventDefault();
+    addDriveLinkToTask();
+  }
+  if(e.key==='Enter'&&e.target.id==='fdriveurl'){
+    e.preventDefault();
+    addDriveLinkToFiles();
+  }
   if(e.key==='Enter'&&e.target.id==='subin'){
     e.preventDefault();
     $('#subadd')?.click();
@@ -1100,7 +1177,7 @@ function gastos(){
 function openBk(){
   $('#dk').innerHTML=`<div class="f">
     <h2>Backup dos dados</h2>
-    <p class="sub" style="margin:0">Baixe um arquivo <code>.json</code> com seus assuntos, tarefas, fotos, PDFs, arquivos, trades e lançamentos financeiros.</p>
+    <p class="sub" style="margin:0">Baixe um arquivo <code>.json</code> com seus assuntos, tarefas, fotos, PDFs, arquivos, links do Drive, trades e lançamentos financeiros.</p>
     <div class="acts" style="justify-content:flex-start"><button class="btn pri" type="button" id="bx">Exportar arquivo (.json)</button></div>
     <label>Restaurar de um backup (substitui os dados atuais e envia à nuvem)<input type="file" id="rf" accept=".json,application/json"></label>
     <p id="bm" class="sub" style="margin:0" role="status"></p>
@@ -1184,18 +1261,66 @@ function openPz(){drawPz();$('#dk').showModal()}
 const ext=n=>(n.includes('.')?n.split('.').pop():'arq').slice(0,4);
 const sz=b=>b>1048576?(b/1048576).toFixed(1)+' MB':Math.max(1,Math.round(b/1024))+' KB';
 
+function addDriveLinkToFiles(){
+  const urlInp=$('#fdriveurl');
+  const nameInp=$('#fdrivename');
+  const parsed=parseDriveUrl(urlInp?.value);
+  if(!parsed){
+    urlInp?.focus();
+    notify('Cole um link válido do Google Drive.');
+    return;
+  }
+  const name=(nameInp?.value||'').trim()||(parsed.isDriveHost?'Arquivo no Google Drive':parsed.host);
+  S.files.push({
+    id:uid(),
+    sub:view,
+    kind:'drive',
+    name,
+    url:parsed.url,
+    type:'drive/link',
+    size:0,
+    date:TODAY,
+    data:''
+  });
+  save();
+  render();
+  notify('Link do Google Drive salvo em Arquivos.');
+}
+
 function filesView(id){
   const L=S.files.filter(f=>f.sub===id);
-  return '<label class="btn pri" style="display:inline-flex;margin-bottom:14px">+ Adicionar arquivos<input type="file" id="fu" multiple hidden></label>'+
-    '<p class="sub" id="fm" role="status" style="margin:0 0 12px"></p>'+
-    (L.length?L.map(f=>`<div class="fl">
-      <div class="fi">${esc(ext(f.name))}</div>
-      <div class="fn"><b>${esc(f.name)}</b><span class="meta">${sz(f.size)} · ${new Date(f.date+'T00:00').toLocaleDateString('pt-BR')}</span></div>
-      ${f.type.startsWith('image/')?`<button class="btn" type="button" data-fo="${f.id}">Ver</button>`:''}
-      <button class="btn" type="button" data-fs="${f.id}">Baixar</button>
-      <button class="btn bad" type="button" data-fx="${f.id}" aria-label="Excluir ${esc(f.name)}">×</button>
-    </div>`).join('')
-    :'<div class="empty">Nenhum arquivo guardado neste assunto. Adicione PDFs, planilhas, documentos ou imagens (até 5 MB cada para sincronizar rápido).</div>');
+  return `
+    <div class="pn">
+      <h3>Vincular link do Google Drive</h3>
+      <div class="ff">
+        <label>Link do Google Drive<input id="fdriveurl" type="url" placeholder="https://drive.google.com/..."></label>
+        <label>Nome de identificação<input id="fdrivename" placeholder="Ex: Edital, Planilha, Relatório"></label>
+        <button class="btn pri" type="button" id="fdriveadd">Salvar link</button>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      <label class="btn" style="display:inline-flex;margin:0">+ Enviar arquivo local (até 5 MB)<input type="file" id="fu" multiple hidden></label>
+      <span class="sub" id="fm" role="status" style="margin:0"></span>
+    </div>`+
+    (L.length?L.map(f=>{
+      const isDrv=f.kind==='drive'||f.type==='drive/link'||Boolean(f.url);
+      if(isDrv){
+        return `<div class="fl">
+          <div class="fi drive">DRV</div>
+          <div class="fn"><b>${esc(f.name)}</b><span class="meta">Google Drive · ${new Date(f.date+'T00:00').toLocaleDateString('pt-BR')}</span></div>
+          <a class="btn pri" href="${esc(f.url)}" target="_blank" rel="noopener">Abrir no Drive</a>
+          <button class="btn bad" type="button" data-fx="${f.id}" aria-label="Excluir ${esc(f.name)}">×</button>
+        </div>`;
+      }
+      return `<div class="fl">
+        <div class="fi">${esc(ext(f.name))}</div>
+        <div class="fn"><b>${esc(f.name)}</b><span class="meta">${sz(f.size)} · ${new Date(f.date+'T00:00').toLocaleDateString('pt-BR')}</span></div>
+        ${f.type.startsWith('image/')?`<button class="btn" type="button" data-fo="${f.id}">Ver</button>`:''}
+        <button class="btn" type="button" data-fs="${f.id}">Baixar</button>
+        <button class="btn bad" type="button" data-fx="${f.id}" aria-label="Excluir ${esc(f.name)}">×</button>
+      </div>`;
+    }).join('')
+    :'<div class="empty">Nenhum arquivo ou link do Google Drive neste assunto ainda.</div>');
 }
 
 const rd=f=>new Promise(res=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>res(null);r.readAsDataURL(f)});
@@ -1206,7 +1331,7 @@ async function addFiles(L){
   for(const f of L){
     if(f.size>5242880){big.push(f.name);continue}
     const data=await rd(f);if(!data)continue;
-    S.files.push({id:uid(),sub:view,name:f.name,type:f.type||'application/octet-stream',size:f.size,date:TODAY,data});
+    S.files.push({id:uid(),sub:view,kind:'file',name:f.name,url:'',type:f.type||'application/octet-stream',size:f.size,date:TODAY,data});
     ok++;
   }
   save();render();
