@@ -137,9 +137,17 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc);outline:none}
 .subitem{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--mute)}
 .subitem.ok{text-decoration:line-through;opacity:.65}
 
-.th{display:flex;gap:7px;margin-top:9px;flex-wrap:wrap}
+.th{display:flex;gap:7px;margin-top:9px;flex-wrap:wrap;align-items:center}
 .th img,.gal img{object-fit:cover;border-radius:8px;display:block;border:1px solid var(--line)}
 .th img{width:54px;height:54px}
+.pdf-chip{
+  display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;
+  background:var(--panel-2);border:1px solid var(--line);font-size:12px;font-weight:600;color:var(--ink);
+  max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap
+}
+.pdf-badge{
+  background:var(--bad);color:#fff;font-size:10px;font-weight:700;padding:2px 5px;border-radius:5px;flex:none
+}
 .gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
 .gal button{padding:0;border:0;background:none;position:relative;border-radius:10px;overflow:hidden;box-shadow:var(--shadow)}
 .gal img{width:100%;aspect-ratio:1;border:0}
@@ -163,10 +171,15 @@ dialog::backdrop{background:rgba(8,16,22,.65);backdrop-filter:blur(4px)}
 .f label{display:grid;gap:5px;font-size:13px;font-weight:500;color:var(--mute)}
 .row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
 .acts{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:4px}
-.pv{display:flex;gap:8px;flex-wrap:wrap}
-.pv div{position:relative}
+.pv{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.pv>div{position:relative}
 .pv img{width:74px;height:74px;object-fit:cover;border-radius:9px;border:1px solid var(--line)}
-.pv button{
+.pv .pv-pdf{
+  width:130px;height:74px;border-radius:9px;border:1px solid var(--line);background:var(--panel-2);
+  padding:8px;display:flex;flex-direction:column;justify-content:space-between;font-size:11px;color:var(--ink)
+}
+.pv .pv-pdf span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.pv>div>button{
   position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:999px;
   border:0;background:var(--bad);color:#fff;line-height:1;font-size:14px
 }
@@ -249,7 +262,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const $=s=>document.querySelector(s),uid=()=>Math.random().toString(36).slice(2,9);
 const COL=['#0E7C86','#C4472F','#6B5BD2','#D08A12','#2F8F4E','#B4408C'];
-const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&','<':'<','>':'>','"':'"'}[c]));
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'>','"':'&quot;'}[c]));
 const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 const TODAY=iso(new Date());
 const fd=d=>d===TODAY?'Hoje':new Date(d+'T00:00').toLocaleDateString('pt-BR',{weekday:'short',day:'numeric',month:'short'});
@@ -292,6 +305,30 @@ function setSyncStatus(st,lbl){
   const dot=$('.sync-dot'),txt=$('.sync-txt');
   if(dot){dot.className='sync-dot'+(st==='busy'?' busy':st==='err'?' err':'')}
   if(txt)txt.textContent=lbl;
+}
+
+/* ================= ANEXOS DE TAREFA (IMAGENS + PDF) ================= */
+function normAtt(item){
+  if(typeof item==='string'){
+    return {type:'image/jpeg',name:'Imagem',data:item};
+  }
+  return {
+    type:item?.type||'image/jpeg',
+    name:item?.name||'Anexo',
+    data:item?.data||''
+  };
+}
+const isPdfAtt=item=>normAtt(item).type==='application/pdf'||/\.pdf$/i.test(normAtt(item).name);
+const isImgAtt=item=>!isPdfAtt(item);
+
+function openPdfData(dataUrl,name='documento.pdf'){
+  const blob=d2b(dataUrl);
+  const url=URL.createObjectURL(blob);
+  const win=window.open(url,'_blank','noopener');
+  if(!win){
+    triggerDownload(name,blob,'application/pdf');
+  }
+  setTimeout(()=>URL.revokeObjectURL(url),15000);
 }
 
 /* ================= LOGIN & SINCRONIZAÇÃO NUVEM ================= */
@@ -466,6 +503,23 @@ function shrink(f){
     r.readAsDataURL(f);
   });
 }
+
+async function processTaskAttachment(f){
+  const isPdf=f.type==='application/pdf'||/\.pdf$/i.test(f.name);
+  if(isPdf){
+    if(f.size>5242880){
+      notify('PDF acima de 5 MB: '+f.name);
+      return null;
+    }
+    const data=await rd(f);
+    if(!data)return null;
+    return {type:'application/pdf',name:f.name,data};
+  }
+  const imgData=await shrink(f);
+  if(!imgData)return null;
+  return {type:'image/jpeg',name:f.name||'Imagem',data:imgData};
+}
+
 const cmp=(a,b)=>(a.date||'9')+(a.time||'99')<(b.date||'9')+(b.time||'99')?-1:1;
 
 function matchTask(t){
@@ -473,7 +527,8 @@ function matchTask(t){
   if(fstatus==='done'&&!t.done)return false;
   if(qtext){
     const q=qtext.toLowerCase();
-    const hay=[t.title,t.note,t.cat,sub(t.sub).name,...(t.subs||[]).map(x=>x.text)].join(' ').toLowerCase();
+    const attNames=(t.photos||[]).map(x=>normAtt(x).name);
+    const hay=[t.title,t.note,t.cat,sub(t.sub).name,...(t.subs||[]).map(x=>x.text),...attNames].join(' ').toLowerCase();
     if(!hay.includes(q))return false;
   }
   return true;
@@ -543,7 +598,7 @@ function render(){
     }else if(mode==='arquivos'){
       m.innerHTML+=filesView(view);
     }else if(mode==='galeria'){
-      const P=T0.flatMap(t=>t.photos.map(p=>({p,t})));
+      const P=T0.flatMap(t=>(t.photos||[]).filter(isImgAtt).map(p=>({p:normAtt(p).data,t})));
       m.innerHTML+=P.length
         ?'<div class="gal">'+P.map(x=>`<button data-t="${x.t.id}"><img src="${x.p}" alt="${esc(x.t.title)}"><span>${esc(x.t.title)}</span></button>`).join('')+'</div>'
         :'<div class="empty">Nenhuma foto neste assunto. Abra uma tarefa e anexe fotos.</div>';
@@ -564,13 +619,24 @@ const quick=()=>`<div class="quick"><input id="q" value="${esc(qtext)}" placehol
 
 function filterBar(showStatus){
   return `<div class="toolbar">
-    <input id="search" type="search" value="${esc(qtext)}" placeholder="Buscar por título, anotação, categoria ou subtarefa..." aria-label="Buscar tarefas">
+    <input id="search" type="search" value="${esc(qtext)}" placeholder="Buscar por título, anotação, categoria, anexo ou subtarefa..." aria-label="Buscar tarefas">
     ${showStatus?`<div class="tabs" style="margin-left:0">
       <button class="tab ${fstatus==='all'?'on':''}" data-st="all">Todas</button>
       <button class="tab ${fstatus==='open'?'on':''}" data-st="open">Pendentes</button>
       <button class="tab ${fstatus==='done'?'on':''}" data-st="done">Concluídas</button>
     </div>`:''}
   </div>`;
+}
+
+function renderTaskAttThumbs(photos){
+  const list=(photos||[]).slice(0,4).map(normAtt);
+  if(!list.length)return '';
+  return '<div class="th">'+list.map(a=>{
+    if(isPdfAtt(a)){
+      return `<span class="pdf-chip" title="${esc(a.name)}"><span class="pdf-badge">PDF</span><span>${esc(a.name)}</span></span>`;
+    }
+    return `<img src="${a.data}" alt="${esc(a.name)}">`;
+  }).join('')+'</div>';
 }
 
 function grp(n,L,showSub,cls=''){
@@ -592,7 +658,7 @@ function grp(n,L,showSub,cls=''){
           ${t.note?`<span>${esc(t.note.slice(0,65))}</span>`:''}
         </div>
         ${subs.length?`<div class="sublist">${subs.slice(0,4).map(x=>`<div class="subitem ${x.done?'ok':''}"><span>${x.done?'☑':'☐'}</span><span>${esc(x.text)}</span></div>`).join('')}${subs.length>4?`<div class="subitem">+${subs.length-4} etapa(s)</div>`:''}</div>`:''}
-        ${t.photos.length?'<div class="th">'+t.photos.slice(0,4).map(p=>`<img src="${p}" alt="">`).join('')+'</div>':''}
+        ${renderTaskAttThumbs(t.photos)}
       </button>
     </div>`;
   }).join('')+'</div>';
@@ -615,6 +681,7 @@ function openT(id){
   if(!t)return;
   cur=JSON.parse(JSON.stringify(t));
   cur.subs=cur.subs||[];
+  cur.photos=(cur.photos||[]).map(normAtt);
   cur.isNew=false;delArm=false;drawT();$('#dt').showModal();
 }
 
@@ -648,8 +715,21 @@ function drawT(){
       </div>
     </div>
     <label>Anotações<textarea id="tn" rows="3">${esc(cur.note)}</textarea></label>
-    <label>Fotos<input type="file" id="tf" accept="image/*" multiple></label>
-    <div class="pv">${cur.photos.map((p,i)=>`<div><img src="${p}" alt="Foto ${i+1}"><button type="button" data-rp="${i}" aria-label="Remover foto">×</button></div>`).join('')}</div>
+    <label>Fotos ou PDFs (PDF até 5 MB)<input type="file" id="tf" accept="image/*,application/pdf,.pdf" multiple></label>
+    <div class="pv">${(cur.photos||[]).map((raw,i)=>{
+      const a=normAtt(raw);
+      if(isPdfAtt(a)){
+        return `<div>
+          <div class="pv-pdf" title="${esc(a.name)}">
+            <span class="pdf-badge" style="align-self:flex-start">PDF</span>
+            <span>${esc(a.name)}</span>
+            <button class="btn" type="button" data-openpdf="${i}" style="padding:2px 7px;min-height:24px;font-size:11px;align-self:flex-start">Abrir</button>
+          </div>
+          <button type="button" data-rp="${i}" aria-label="Remover anexo">×</button>
+        </div>`;
+      }
+      return `<div><img src="${a.data}" alt="${esc(a.name)}"><button type="button" data-rp="${i}" aria-label="Remover anexo">×</button></div>`;
+    }).join('')}</div>
     <div class="acts">
       <button class="btn bad" type="button" id="tdel">${delArm?'Confirmar exclusão':'Excluir'}</button>
       <button class="btn" type="button" id="tx">Cancelar</button>
@@ -747,6 +827,11 @@ document.addEventListener('click',async e=>{
     if(t){t.done=!t.done;save();render();notify(t.done?'Tarefa concluída!':'Tarefa reaberta.')}
   }
   else if(g('data-t')){openT(g('data-t').dataset.t)}
+  else if(g('data-openpdf')){
+    const idx=+g('data-openpdf').dataset.openpdf;
+    const a=normAtt(cur?.photos?.[idx]);
+    if(a.data)openPdfData(a.data,a.name);
+  }
   else if(g('data-rp')){grab();cur.photos.splice(+g('data-rp').dataset.rp,1);drawT()}
   else if(id==='subadd'){
     const inp=$('#subin'),txt=inp.value.trim();
@@ -865,11 +950,13 @@ document.addEventListener('change',async e=>{
   else if(e.target.id==='tbanca'){S.bancaIni=Number(e.target.value)||0;save();render();notify('Saldo inicial da banca atualizado.')}
   else if(e.target.id==='tf'){
     grab();
+    let added=0;
     for(const f of e.target.files){
-      const p=await shrink(f);
-      if(p)cur.photos.push(p);
+      const att=await processTaskAttachment(f);
+      if(att){cur.photos.push(att);added++}
     }
     drawT();
+    if(added)notify(added+' anexo(s) adicionado(s).');
   }
 });
 
@@ -895,7 +982,7 @@ function gastos(){
 function openBk(){
   $('#dk').innerHTML=`<div class="f">
     <h2>Backup dos dados</h2>
-    <p class="sub" style="margin:0">Baixe um arquivo <code>.json</code> com seus assuntos, tarefas, fotos, arquivos, trades e lançamentos financeiros.</p>
+    <p class="sub" style="margin:0">Baixe um arquivo <code>.json</code> com seus assuntos, tarefas, fotos, PDFs, arquivos, trades e lançamentos financeiros.</p>
     <div class="acts" style="justify-content:flex-start"><button class="btn pri" type="button" id="bx">Exportar arquivo (.json)</button></div>
     <label>Restaurar de um backup (substitui os dados atuais e envia à nuvem)<input type="file" id="rf" accept=".json,application/json"></label>
     <p id="bm" class="sub" style="margin:0" role="status"></p>
@@ -943,7 +1030,11 @@ const mig=()=>{
   S.trades=S.trades||[];
   S.bancaIni=Number(S.bancaIni)||0;
   S.subs.forEach(s=>s.cats=s.cats||[]);
-  S.tasks.forEach(t=>{t.cat=t.cat||'';t.photos=t.photos||[];t.subs=t.subs||[]});
+  S.tasks.forEach(t=>{
+    t.cat=t.cat||'';
+    t.photos=(t.photos||[]).map(normAtt);
+    t.subs=t.subs||[];
+  });
 };
 
 const PAL=[0,30,50,75,100,150,175,200,220,250,280,320]
@@ -1143,7 +1234,7 @@ const SETUPS=['Rompimento','Pullback','VWAP','Abertura','Ajuste','Tendência','R
 function addTrade(){
   const raw=Math.abs(parseFloat($('#trval').value));
   if(!(raw>0)){$('#trval').focus();notify('Informe o valor em R$ do trade.');return}
-  const resType=$('#trres').value; // gain | loss
+  const resType=$('#trres').value;
   const val=Math.round((resType==='loss'?-raw:raw)*100)/100;
   const date=$('#trdate').value||TODAY;
   const ptsRaw=parseFloat($('#trpts').value);
@@ -1187,7 +1278,6 @@ function tradesView(){
   const avgLoss=losses.length?Math.abs(losses.reduce((a,x)=>a+x.val,0)/losses.length):0;
   const payoff=avgLoss>0?(avgGain/avgLoss).toFixed(2):(gains.length?'∞':'0.00');
 
-  /* Curva de capital histórica (Saldo Inicial + evolução trade a trade) */
   const curvePts=[{label:'Início',val:bancaIni}];
   let run=bancaIni;
   all.forEach((t,idx)=>{
@@ -1225,7 +1315,6 @@ function tradesView(){
     equitySvg='<div class="empty">Lance seu primeiro trade de Mini Índice para visualizar a curva de evolução do patrimônio.</div>';
   }
 
-  /* Barras dia a dia no mês selecionado */
   const dayNet=Array.from({length:nd},()=>0);
   M.forEach(x=>{dayNet[+x.date.slice(8)-1]+=x.val});
   const maxAbs=Math.max(1,...dayNet.map(v=>Math.abs(v)));
@@ -1239,7 +1328,6 @@ function tradesView(){
            ((i+1)%5===0||i===0?`<text x="${i*bw+bw/2}" y="142" text-anchor="middle" style="fill:var(--mute);font-size:10px">${i+1}</text>`:'');
   }).join('');
 
-  /* Desempenho por setup no mês */
   const bySetup={};
   M.forEach(x=>{bySetup[x.setup]=(bySetup[x.setup]||0)+x.val});
   const setupEntries=Object.entries(bySetup).sort((a,b)=>b[1]-a[1]);
