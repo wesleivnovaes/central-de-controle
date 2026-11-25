@@ -107,6 +107,18 @@ input,select,textarea{
 }
 input:focus,select:focus,textarea:focus{border-color:var(--acc);outline:none;box-shadow:0 0 0 3px var(--acc-soft)}
 
+.home-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:22px}
+.home-kpi{
+  background:var(--panel);border:1px solid var(--line-soft);border-radius:14px;
+  padding:15px 16px;text-align:left;box-shadow:var(--shadow);display:grid;gap:4px
+}
+.home-kpi:hover{border-color:var(--acc);transform:translateY(-2px)}
+.home-kpi span{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--mute)}
+.home-kpi b{font-family:'Bricolage Grotesque',sans-serif;font-size:21px;line-height:1.15}
+.home-kpi small{font-size:12.5px;color:var(--mute)}
+
+.home-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-bottom:22px;align-items:start}
+
 .stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:26px}
 .stat{
   background:var(--panel);border:1px solid var(--line-soft);border-radius:14px;
@@ -272,6 +284,7 @@ const COL=['#0E7C86','#C4472F','#6B5BD2','#D08A12','#2F8F4E','#B4408C'];
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'>','"':'&quot;'}[c]));
 const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 const TODAY=iso(new Date());
+const CUR_MONTH=TODAY.slice(0,7);
 const fd=d=>d===TODAY?'Hoje':new Date(d+'T00:00').toLocaleDateString('pt-BR',{weekday:'short',day:'numeric',month:'short'});
 const brl=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const sbrl=v=>(v>0?'+':v<0?'−':'')+brl(Math.abs(v||0));
@@ -295,7 +308,7 @@ let S=defaultState();
 let currentUser=null;
 let syncState='ok';
 let syncLabel='Sincronizado';
-let view='hoje',mode='tarefas',cur=null,csub=null,delArm=false,fcat='',fm=TODAY.slice(0,7),tm=TODAY.slice(0,7),qtext='',fstatus='all',fpay='',tsetup='';
+let view='inicio',mode='tarefas',cur=null,csub=null,delArm=false,fcat='',fm=TODAY.slice(0,7),tm=TODAY.slice(0,7),qtext='',fstatus='all',fpay='',tsetup='';
 
 let toastTm;
 function notify(msg){
@@ -547,6 +560,98 @@ function applyTheme(){
   else document.documentElement.setAttribute('data-theme',th);
 }
 
+/* ================= HOME (VISÃO GERAL) ================= */
+function homeView(){
+  const lateTasks=S.tasks.filter(t=>!t.done&&t.date&&t.date<TODAY);
+  const todayTasks=S.tasks.filter(t=>!t.done&&t.date===TODAY);
+  const openTotal=S.tasks.filter(t=>!t.done).length;
+
+  const E=(S.fin||[]).filter(x=>x.date.slice(0,7)===CUR_MONTH);
+  const ent=E.filter(x=>x.type==='entrada').reduce((a,x)=>a+x.val,0);
+  const sai=E.filter(x=>x.type==='saida').reduce((a,x)=>a+x.val,0);
+  const sal=ent-sai;
+
+  const allTrades=S.trades||[];
+  const bancaIni=Number(S.bancaIni)||0;
+  const acumTrades=allTrades.reduce((a,x)=>a+x.val,0);
+  const patWin=bancaIni+acumTrades;
+  const mesTrades=allTrades.filter(x=>x.date.slice(0,7)===CUR_MONTH).reduce((a,x)=>a+x.val,0);
+
+  const tradeSub=S.subs.find(isTrade);
+  const finSub=S.subs.find(isFin);
+
+  const focusList=[...lateTasks,...todayTasks].sort(cmp).slice(0,5);
+
+  return `
+    <div class="head">
+      <h1>Início</h1>
+      <div class="tabs">
+        <button class="tab" type="button" data-v="hoje">Ver Hoje</button>
+        ${finSub?`<button class="tab" type="button" data-v="${finSub.id}" data-force-mode="fin">Financeiro</button>`:`<button class="tab" type="button" data-v="gastos">Gastos por mês</button>`}
+        ${tradeSub?`<button class="tab" type="button" data-v="${tradeSub.id}" data-force-mode="trades">Trades WIN</button>`:''}
+      </div>
+    </div>
+    <p class="sub">Visão geral · ${new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'})}</p>
+
+    ${quick()}
+
+    <div class="home-kpis">
+      <button class="home-kpi" type="button" data-v="hoje">
+        <span>Foco de hoje</span>
+        <b>${todayTasks.length} hoje · ${lateTasks.length} atrasada${lateTasks.length===1?'':'s'}</b>
+        <small>${openTotal} tarefa${openTotal===1?'':'s'} aberta${openTotal===1?'':'s'} no total</small>
+      </button>
+
+      <button class="home-kpi" type="button" data-v="${finSub?finSub.id:'gastos'}" ${finSub?'data-force-mode="fin"':''}>
+        <span>Saldo do mês</span>
+        <b style="color:${sal<0?'var(--bad)':'var(--acc)'}">${brl(sal)}</b>
+        <small>Entradas ${brl(ent)} · Saídas ${brl(sai)}</small>
+      </button>
+
+      <button class="home-kpi" type="button" data-v="${tradeSub?tradeSub.id:'hoje'}" ${tradeSub?'data-force-mode="trades"':''}>
+        <span>Patrimônio WIN</span>
+        <b style="color:${patWin>=bancaIni?'var(--ok)':'var(--bad)'}">${brl(patWin)}</b>
+        <small>Mês ${sbrl(mesTrades)} · Acumulado ${sbrl(acumTrades)}</small>
+      </button>
+    </div>
+
+    <div class="home-grid">
+      <div class="pn" style="margin-bottom:0">
+        <h3>Prioridades imediatas</h3>
+        ${focusList.length?focusList.map(t=>{
+          const isLate=t.date&&t.date<TODAY;
+          return `<div class="task ${t.done?'done':''}" style="margin-bottom:8px">
+            <button class="chk" data-c="${t.id}" aria-label="Marcar como cumprida">${t.done?'✓':''}</button>
+            <button class="tb" data-t="${t.id}">
+              <div class="tt">${esc(t.title)}</div>
+              <div class="meta">
+                <span class="chip"><i style="background:${sub(t.sub).color}"></i>${esc(sub(t.sub).name)}</span>
+                <span style="${isLate?'color:var(--bad);font-weight:600':''}">${fd(t.date)}</span>
+                ${t.time?`<span>${t.time}</span>`:''}
+              </div>
+            </button>
+          </div>`;
+        }).join('')
+        :'<div class="empty">Nenhuma tarefa pendente para hoje ou atrasada.</div>'}
+      </div>
+
+      <div class="pn" style="margin-bottom:0">
+        <h3>Assuntos</h3>
+        <div class="stats" style="margin-bottom:0;grid-template-columns:repeat(auto-fill,minmax(175px,1fr))">
+          ${S.subs.map(s=>{
+            const t=S.tasks.filter(x=>x.sub===s.id),d=t.filter(x=>x.done).length;
+            return `<button class="stat" type="button" data-v="${s.id}">
+              <b>${esc(s.name)}</b>
+              <span class="meta">${d} de ${t.length} concluídas</span>
+              <div class="bar"><i style="width:${t.length?d/t.length*100:0}%;background:${s.color}"></i></div>
+            </button>`;
+          }).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function render(){
   applyTheme();
   $('#side').innerHTML=
@@ -554,6 +659,7 @@ function render(){
     ['auto','light','dark'].map(t=>`<button class="${(S.theme||'auto')===t?'on':''}" data-th="${t}">${t==='auto'?'Auto':t==='light'?'Claro':'Escuro'}</button>`).join('')+
     '</div></div>'+
     `<div class="sync-badge"><span class="sync-dot ${syncState==='busy'?'busy':syncState==='err'?'err':''}"></span><span class="sync-txt">${esc(syncLabel)}</span></div>`+
+    `<button class="nav ${view==='inicio'?'on':''}" data-v="inicio"><span class="dot" style="background:var(--ok)"></span>Início</button>`+
     `<button class="nav ${view==='hoje'?'on':''}" data-v="hoje"><span class="dot" style="background:var(--acc)"></span>Hoje<span class="n">${S.tasks.filter(t=>!t.done&&t.date&&t.date<=TODAY).length}</span></button>`+
     S.subs.map(s=>`<button class="nav ${view===s.id?'on':''}" data-v="${s.id}"><span class="dot" style="background:${s.color}"></span>${esc(s.name)}<span class="n">${pend(s.id)}</span></button>`).join('')+
     `<button class="nav ${view==='gastos'?'on':''}" data-v="gastos"><span class="dot" style="background:var(--mute)"></span>Gastos por mês</button>`+
@@ -565,7 +671,9 @@ function render(){
     '<button class="ghost" id="logoutbtn" style="color:var(--bad)">Sair da conta</button>';
 
   const m=$('#main');
-  if(view==='gastos'){
+  if(view==='inicio'){
+    m.innerHTML=homeView();
+  }else if(view==='gastos'){
     m.innerHTML=gastos();
   }else if(view==='hoje'){
     const base=S.tasks.filter(t=>!t.done&&t.date).filter(matchTask);
@@ -622,7 +730,7 @@ function render(){
   }
 }
 
-const quick=()=>`<div class="quick"><input id="q" value="${esc(qtext)}" placeholder="${view==='hoje'?'Nova tarefa para hoje':'Nova tarefa'}" aria-label="Nova tarefa"><button class="btn pri" id="qa">Adicionar</button></div>`;
+const quick=()=>`<div class="quick"><input id="q" value="${esc(qtext)}" placeholder="${view==='hoje'||view==='inicio'?'Nova tarefa para hoje':'Nova tarefa'}" aria-label="Nova tarefa"><button class="btn pri" id="qa">Adicionar</button></div>`;
 
 function filterBar(showStatus){
   return `<div class="toolbar">
@@ -674,10 +782,11 @@ function grp(n,L,showSub,cls=''){
 function addQuick(){
   const i=$('#q'),v=i.value.trim();
   if(!v)return;
+  const forToday=view==='hoje'||view==='inicio';
   S.tasks.push({
-    id:uid(),sub:view==='hoje'?(S.subs[0]?.id||''):view,title:v,
-    date:view==='hoje'?TODAY:'',time:'',note:'',val:'',
-    cat:view==='hoje'?'':fcat,done:false,photos:[],subs:[]
+    id:uid(),sub:forToday?(S.subs[0]?.id||''):view,title:v,
+    date:forToday?TODAY:'',time:'',note:'',val:'',
+    cat:forToday?'':fcat,done:false,photos:[],subs:[]
   });
   qtext='';
   save();render();notify('Tarefa adicionada.');$('#q')?.focus();
@@ -823,8 +932,10 @@ document.addEventListener('click',async e=>{
     save();render();notify(S.theme==='auto'?'Tema automático ativado.':S.theme==='dark'?'Tema escuro ativado.':'Tema claro ativado.');
   }
   else if(g('data-v')){
-    view=g('data-v').dataset.v;
-    mode=defaultModeFor(sub(view));
+    const el=g('data-v');
+    view=el.dataset.v;
+    const forced=el.dataset.forceMode;
+    mode=forced||defaultModeFor(sub(view));
     fcat='';fpay='';tsetup='';render();
   }
   else if(g('data-m')){mode=g('data-m').dataset.m;render()}
@@ -924,7 +1035,7 @@ document.addEventListener('click',async e=>{
       S.tasks=S.tasks.filter(t=>t.sub!==csub.id);
       S.files=S.files.filter(f=>f.sub!==csub.id);
       S.subs=S.subs.filter(s=>s.id!==csub.id);
-      view='hoje';save();$('#ds').close();render();notify('Assunto removido.');
+      view='inicio';save();$('#ds').close();render();notify('Assunto removido.');
     }
   }
 });
@@ -1020,7 +1131,7 @@ async function restoreBk(f){
   try{
     const d=JSON.parse(await f.text());
     if(!Array.isArray(d.subs)||!Array.isArray(d.tasks))throw new Error('Estrutura inválida');
-    S=d;mig();applyAcc();applyTheme();save();view='hoje';render();
+    S=d;mig();applyAcc();applyTheme();save();view='inicio';render();
     m.textContent='Dados restaurados e enviados à nuvem: '+d.subs.length+' assuntos e '+d.tasks.length+' tarefas.';
     notify('Backup restaurado com sucesso!');
   }catch(e){
