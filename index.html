@@ -157,8 +157,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc);outline:none;box
 .subitem.ok{text-decoration:line-through;opacity:.65}
 
 .th{display:flex;gap:7px;margin-top:9px;flex-wrap:wrap;align-items:center}
-.th img,.gal img{object-fit:cover;border-radius:8px;display:block;border:1px solid var(--line)}
-.th img{width:52px;height:52px}
+.th img{width:52px;height:52px;object-fit:cover;border-radius:8px;display:block;border:1px solid var(--line)}
 .pdf-chip{
   display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:8px;
   background:var(--panel-2);border:1px solid var(--line);font-size:12px;font-weight:600;color:var(--ink);
@@ -169,14 +168,6 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc);outline:none;box
 }
 .drive-badge{
   background:var(--acc);color:var(--accink);font-size:10px;font-weight:700;padding:2px 5px;border-radius:5px;flex:none
-}
-.gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
-.gal button{padding:0;border:0;background:none;position:relative;border-radius:10px;overflow:hidden;box-shadow:var(--shadow)}
-.gal img{width:100%;aspect-ratio:1;border:0}
-.gal span{
-  position:absolute;left:6px;bottom:6px;right:6px;font-size:12px;font-weight:500;
-  background:rgba(12,22,28,.75);backdrop-filter:blur(4px);color:#fff;
-  border-radius:7px;padding:3px 7px;text-align:left;overflow:hidden;white-space:nowrap;text-overflow:ellipsis
 }
 
 .empty{
@@ -312,7 +303,7 @@ let S=defaultState();
 let currentUser=null;
 let syncState='ok';
 let syncLabel='Sincronizado';
-let view='inicio',mode='tarefas',cur=null,csub=null,delArm=false,fcat='',fm=TODAY.slice(0,7),tm=TODAY.slice(0,7),qtext='',fstatus='all',fpay='',tsetup='';
+let view='inicio',mode='tarefas',cur=null,csub=null,delArm=false,fcat='',fm=CUR_MONTH,tm=CUR_MONTH,qtext='',fstatus='all';
 
 let toastTm;
 function notify(msg){
@@ -341,40 +332,26 @@ function parseDriveUrl(raw){
     if(u.protocol!=='https:'&&u.protocol!=='http:')return null;
     const host=u.hostname.toLowerCase();
     const isDriveHost=
-      host==='drive.google.com'||
-      host.endsWith('.drive.google.com')||
-      host==='docs.google.com'||
-      host.endsWith('.docs.google.com')||
-      host==='sheets.google.com'||
-      host==='slides.google.com';
+      host==='drive.google.com'||host.endsWith('.drive.google.com')||
+      host==='docs.google.com'||host.endsWith('.docs.google.com')||
+      host==='sheets.google.com'||host==='slides.google.com';
     return {url:u.href,host,isDriveHost};
-  }catch(e){
-    return null;
-  }
+  }catch(e){return null}
 }
 
 function normAtt(item){
-  if(typeof item==='string'){
-    return {type:'image/jpeg',name:'Imagem',data:item,url:''};
-  }
-  return {
-    type:item?.type||'image/jpeg',
-    name:item?.name||'Anexo',
-    data:item?.data||'',
-    url:item?.url||''
-  };
+  if(typeof item==='string')return {type:'image/jpeg',name:'Imagem',data:item};
+  if(item?.url)return {type:'drive/link',name:item.name||'Link do Drive',url:item.url};
+  return {type:item?.type||'image/jpeg',name:item?.name||'Anexo',data:item?.data||''};
 }
-const isDriveAtt=item=>normAtt(item).type==='drive/link'||Boolean(normAtt(item).url);
+const isDriveAtt=item=>Boolean(normAtt(item).url);
 const isPdfAtt=item=>!isDriveAtt(item)&&(normAtt(item).type==='application/pdf'||/\.pdf$/i.test(normAtt(item).name));
-const isImgAtt=item=>!isDriveAtt(item)&&!isPdfAtt(item);
 
 function openPdfData(dataUrl,name='documento.pdf'){
   const blob=d2b(dataUrl);
   const url=URL.createObjectURL(blob);
   const win=window.open(url,'_blank','noopener');
-  if(!win){
-    triggerDownload(name,blob,'application/pdf');
-  }
+  if(!win)triggerDownload(name,blob,'application/pdf');
   setTimeout(()=>URL.revokeObjectURL(url),15000);
 }
 
@@ -408,17 +385,8 @@ function updateAuthUI(){
 async function cloudPull(){
   if(!currentUser)return null;
   setSyncStatus('busy','Buscando nuvem...');
-  const{data,error}=await supabase
-    .from('user_state')
-    .select('state,updated_at')
-    .eq('user_id',currentUser.id)
-    .maybeSingle();
-
-  if(error){
-    setSyncStatus('err','Erro ao sincronizar');
-    notify('Erro ao buscar dados da nuvem.');
-    return null;
-  }
+  const{data,error}=await supabase.from('user_state').select('state,updated_at').eq('user_id',currentUser.id).maybeSingle();
+  if(error){setSyncStatus('err','Erro ao sincronizar');notify('Erro ao buscar dados da nuvem.');return null}
   setSyncStatus('ok','Nuvem conectada');
   return data?.state||null;
 }
@@ -426,20 +394,9 @@ async function cloudPull(){
 async function cloudPush(){
   if(!currentUser)return;
   setSyncStatus('busy','Salvando na nuvem...');
-  const{error}=await supabase
-    .from('user_state')
-    .upsert({
-      user_id:currentUser.id,
-      state:S,
-      updated_at:new Date().toISOString()
-    },{onConflict:'user_id'});
-
-  if(error){
-    setSyncStatus('err','Falha ao salvar na nuvem');
-    notify('Erro ao salvar na nuvem: '+error.message);
-  }else{
-    setSyncStatus('ok','Sincronizado');
-  }
+  const{error}=await supabase.from('user_state').upsert({user_id:currentUser.id,state:S,updated_at:new Date().toISOString()},{onConflict:'user_id'});
+  if(error){setSyncStatus('err','Falha ao salvar na nuvem');notify('Erro ao salvar na nuvem: '+error.message)}
+  else{setSyncStatus('ok','Sincronizado')}
 }
 
 async function syncAfterLogin(){
@@ -450,28 +407,17 @@ async function syncAfterLogin(){
     const localTs=localData?.updatedAt||0;
     const cloudTs=cloudData?.updatedAt||0;
     if(localData&&Array.isArray(localData.subs)&&localTs>cloudTs){
-      S=localData;
-      mig();
-      await cloudPush();
+      S=localData;mig();await cloudPush();
     }else{
-      S=cloudData;
-      mig();
-      await saveLocalOnly();
+      S=cloudData;mig();await saveLocalOnly();
     }
   }else if(localData&&Array.isArray(localData.subs)){
-    S=localData;
-    mig();
-    await cloudPush();
+    S=localData;mig();await cloudPush();
   }else{
-    S=defaultState();
-    S.updatedAt=Date.now();
-    await saveLocalOnly();
-    await cloudPush();
+    S=defaultState();S.updatedAt=Date.now();await saveLocalOnly();await cloudPush();
   }
 
-  applyAcc();
-  applyTheme();
-  render();
+  applyAcc();applyTheme();render();
 }
 
 /* ================= CACHE LOCAL (INDEXEDDB) ================= */
@@ -484,9 +430,7 @@ const idb=()=>new Promise((res,rej)=>{
   }catch(e){rej(e)}
 });
 
-function localKey(){
-  return currentUser?'s_'+currentUser.id:'s_guest';
-}
+const localKey=()=>currentUser?'s_'+currentUser.id:'s_guest';
 
 async function loadLocal(){
   try{
@@ -554,17 +498,12 @@ function shrink(f){
 async function processTaskAttachment(f){
   const isPdf=f.type==='application/pdf'||/\.pdf$/i.test(f.name);
   if(isPdf){
-    if(f.size>5242880){
-      notify('PDF acima de 5 MB: '+f.name);
-      return null;
-    }
+    if(f.size>5242880){notify('PDF acima de 5 MB: '+f.name);return null}
     const data=await rd(f);
-    if(!data)return null;
-    return {type:'application/pdf',name:f.name,data,url:''};
+    return data?{type:'application/pdf',name:f.name,data}:null;
   }
   const imgData=await shrink(f);
-  if(!imgData)return null;
-  return {type:'image/jpeg',name:f.name||'Imagem',data:imgData,url:''};
+  return imgData?{type:'image/jpeg',name:f.name||'Imagem',data:imgData}:null;
 }
 
 const cmp=(a,b)=>(a.date||'9')+(a.time||'99')<(b.date||'9')+(b.time||'99')?-1:1;
@@ -576,7 +515,7 @@ function matchTask(t){
     const q=qtext.toLowerCase();
     const attMeta=(t.photos||[]).flatMap(x=>{
       const a=normAtt(x);
-      return [a.name,a.url];
+      return [a.name,a.url||''];
     });
     const hay=[t.title,t.note,t.cat,sub(t.sub).name,...(t.subs||[]).map(x=>x.text),...attMeta].join(' ').toLowerCase();
     if(!hay.includes(q))return false;
@@ -609,7 +548,6 @@ function homeView(){
 
   const tradeSub=S.subs.find(isTrade);
   const finSub=S.subs.find(isFin);
-
   const focusList=[...lateTasks,...todayTasks].sort(cmp).slice(0,5);
 
   return `
@@ -682,6 +620,24 @@ function homeView(){
   `;
 }
 
+function renderHojeTasks(){
+  const base=S.tasks.filter(t=>!t.done&&t.date).filter(matchTask);
+  const html=grp('Atrasadas',base.filter(t=>t.date<TODAY),1,'late')+
+    grp('Hoje',base.filter(t=>t.date===TODAY),1)+
+    grp('Próximos dias',base.filter(t=>t.date>TODAY),1);
+  return html||'<div class="empty">Nenhuma tarefa com data encontrada para este filtro.</div>';
+}
+
+function renderSubjectTasks(id){
+  const T=S.tasks.filter(t=>t.sub===id&&(!fcat||t.cat===fcat)&&matchTask(t));
+  if(!T.length)return '<div class="empty">Nenhuma tarefa por aqui. Digite acima e aperte Enter.</div>';
+  return grp('Atrasadas',T.filter(t=>!t.done&&t.date&&t.date<TODAY),0,'late')+
+    grp('Hoje',T.filter(t=>!t.done&&t.date===TODAY),0)+
+    grp('Próximos',T.filter(t=>!t.done&&t.date>TODAY),0)+
+    grp('Sem data',T.filter(t=>!t.done&&!t.date),0)+
+    grp('Concluídas',T.filter(t=>t.done),0);
+}
+
 function render(){
   applyTheme();
   $('#side').innerHTML=
@@ -706,7 +662,6 @@ function render(){
   }else if(view==='gastos'){
     m.innerHTML=gastos();
   }else if(view==='hoje'){
-    const base=S.tasks.filter(t=>!t.done&&t.date).filter(matchTask);
     m.innerHTML=
       `<div class="head"><h1>Hoje</h1></div><p class="sub">${new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'})}</p>`+
       quick()+filterBar(false)+
@@ -714,23 +669,16 @@ function render(){
         const t=S.tasks.filter(x=>x.sub===s.id),d=t.filter(x=>x.done).length;
         return `<button class="stat" data-v="${s.id}"><b>${esc(s.name)}</b><span class="meta">${d} de ${t.length} concluídas</span><div class="bar"><i style="width:${t.length?d/t.length*100:0}%;background:${s.color}"></i></div></button>`;
       }).join('')+'</div>'+
-      grp('Atrasadas',base.filter(t=>t.date<TODAY),1,'late')+
-      grp('Hoje',base.filter(t=>t.date===TODAY),1)+
-      grp('Próximos dias',base.filter(t=>t.date>TODAY),1);
-    if(!base.length){
-      m.innerHTML+='<div class="empty">Nenhuma tarefa com data encontrada para este filtro. Escolha um assunto ao lado ou adicione uma tarefa.</div>';
-    }
+      `<div id="taskFeed">${renderHojeTasks()}</div>`;
   }else{
     const s=sub(view);
-    const T0=S.tasks.filter(t=>t.sub===view);
-    const T=T0.filter(t=>(!fcat||t.cat===fcat)&&matchTask(t));
+    const T=S.tasks.filter(t=>t.sub===view);
     const tot=T.reduce((a,t)=>a+(Number(t.val)||0),0);
     m.innerHTML=
       `<div class="head"><span class="dot" style="width:16px;height:16px;border-radius:5px;background:${s.color};margin-bottom:6px"></span><h1>${esc(s.name)}</h1>`+
       `<div class="tabs">`+
       `${isTrade(s)?`<button class="tab ${mode==='trades'?'on':''}" data-m="trades">Trades WIN</button>`:''}`+
       `<button class="tab ${mode==='tarefas'?'on':''}" data-m="tarefas">Tarefas</button>`+
-      `<button class="tab ${mode==='galeria'?'on':''}" data-m="galeria">Fotos</button>`+
       `<button class="tab ${mode==='arquivos'?'on':''}" data-m="arquivos">Arquivos</button>`+
       `${isFin(s)?`<button class="tab ${mode==='fin'?'on':''}" data-m="fin">Financeiro</button>`:''}`+
       `<button class="tab" id="es">Editar</button></div></div>`+
@@ -742,20 +690,8 @@ function render(){
       m.innerHTML+=finView();
     }else if(mode==='arquivos'){
       m.innerHTML+=filesView(view);
-    }else if(mode==='galeria'){
-      const P=T0.flatMap(t=>(t.photos||[]).filter(isImgAtt).map(p=>({p:normAtt(p).data,t})));
-      m.innerHTML+=P.length
-        ?'<div class="gal">'+P.map(x=>`<button data-t="${x.t.id}"><img src="${x.p}" alt="${esc(x.t.title)}"><span>${esc(x.t.title)}</span></button>`).join('')+'</div>'
-        :'<div class="empty">Nenhuma foto neste assunto. Abra uma tarefa e anexe fotos.</div>';
     }else{
-      m.innerHTML+=catbar(s)+quick()+filterBar(true)+
-        (T.length
-          ?grp('Atrasadas',T.filter(t=>!t.done&&t.date&&t.date<TODAY),0,'late')+
-           grp('Hoje',T.filter(t=>!t.done&&t.date===TODAY),0)+
-           grp('Próximos',T.filter(t=>!t.done&&t.date>TODAY),0)+
-           grp('Sem data',T.filter(t=>!t.done&&!t.date),0)+
-           grp('Concluídas',T.filter(t=>t.done),0)
-          :'<div class="empty">Nenhuma tarefa por aqui. Digite acima e aperte Enter.</div>');
+      m.innerHTML+=catbar(s)+quick()+filterBar(true)+`<div id="taskFeed">${renderSubjectTasks(view)}</div>`;
     }
   }
 }
@@ -777,12 +713,8 @@ function renderTaskAttThumbs(photos){
   const list=(photos||[]).slice(0,4).map(normAtt);
   if(!list.length)return '';
   return '<div class="th">'+list.map(a=>{
-    if(isDriveAtt(a)){
-      return `<span class="pdf-chip" title="${esc(a.name)} · ${esc(a.url)}"><span class="drive-badge">DRIVE</span><span>${esc(a.name)}</span></span>`;
-    }
-    if(isPdfAtt(a)){
-      return `<span class="pdf-chip" title="${esc(a.name)}"><span class="pdf-badge">PDF</span><span>${esc(a.name)}</span></span>`;
-    }
+    if(isDriveAtt(a))return `<span class="pdf-chip" title="${esc(a.name)} · ${esc(a.url)}"><span class="drive-badge">DRIVE</span><span>${esc(a.name)}</span></span>`;
+    if(isPdfAtt(a))return `<span class="pdf-chip" title="${esc(a.name)}"><span class="pdf-badge">PDF</span><span>${esc(a.name)}</span></span>`;
     return `<img src="${a.data}" alt="${esc(a.name)}">`;
   }).join('')+'</div>';
 }
@@ -829,14 +761,10 @@ function addDriveLinkToTask(){
   const urlInp=$('#tdriveurl');
   const nameInp=$('#tdrivename');
   const parsed=parseDriveUrl(urlInp?.value);
-  if(!parsed){
-    urlInp?.focus();
-    notify('Cole um link válido do Google Drive.');
-    return;
-  }
+  if(!parsed){urlInp?.focus();notify('Cole um link válido do Google Drive.');return}
   const label=(nameInp?.value||'').trim()||(parsed.isDriveHost?'Arquivo no Google Drive':parsed.host);
   grab();
-  cur.photos.push({type:'drive/link',name:label,data:'',url:parsed.url});
+  cur.photos.push({type:'drive/link',name:label,url:parsed.url});
   drawT();
   notify('Link do Drive anexado à tarefa.');
 }
@@ -953,14 +881,10 @@ function drawS(){
 
 ['dt','ds','dk','dv'].forEach(id=>{
   const dlg=$('#'+id);
-  dlg.addEventListener('click',e=>{
-    if(e.target===dlg)dlg.close();
-  });
+  dlg.addEventListener('click',e=>{if(e.target===dlg)dlg.close()});
 });
 
-$('#dl').addEventListener('cancel',e=>{
-  if(!currentUser)e.preventDefault();
-});
+$('#dl').addEventListener('cancel',e=>{if(!currentUser)e.preventDefault()});
 
 document.addEventListener('submit',async e=>{
   if(e.target.id==='loginForm'){
@@ -969,10 +893,7 @@ document.addEventListener('submit',async e=>{
     const password=$('#lpass').value;
     drawLogin('',true);
     const{data,error}=await supabase.auth.signInWithPassword({email,password});
-    if(error){
-      drawLogin('E-mail ou senha inválidos.',false);
-      return;
-    }
+    if(error){drawLogin('E-mail ou senha inválidos.',false);return}
     currentUser=data.user;
     updateAuthUI();
     await syncAfterLogin();
@@ -985,25 +906,19 @@ document.addEventListener('click',async e=>{
 
   if(id==='logoutbtn'){
     await supabase.auth.signOut();
-    currentUser=null;
-    S=defaultState();
-    updateAuthUI();
-    notify('Sessão encerrada.');
+    currentUser=null;S=defaultState();updateAuthUI();notify('Sessão encerrada.');
   }
-  else if(id==='syncnow'){
-    await syncAfterLogin();
-    notify('Sincronização concluída!');
-  }
+  else if(id==='syncnow'){await syncAfterLogin();notify('Sincronização concluída!')}
   else if(g('data-th')){
     S.theme=g('data-th').dataset.th;
-    save();render();notify(S.theme==='auto'?'Tema automático ativado.':S.theme==='dark'?'Tema escuro ativado.':'Tema claro ativado.');
+    save();render();
+    notify(S.theme==='auto'?'Tema automático ativado.':S.theme==='dark'?'Tema escuro ativado.':'Tema claro ativado.');
   }
   else if(g('data-v')){
     const el=g('data-v');
     view=el.dataset.v;
-    const forced=el.dataset.forceMode;
-    mode=forced||defaultModeFor(sub(view));
-    fcat='';fpay='';tsetup='';render();
+    mode=el.dataset.forceMode||defaultModeFor(sub(view));
+    fcat='';render();
   }
   else if(g('data-m')){mode=g('data-m').dataset.m;render()}
   else if(g('data-st')){fstatus=g('data-st').dataset.st;render()}
@@ -1015,16 +930,14 @@ document.addEventListener('click',async e=>{
   else if(id==='tdriveadd'){addDriveLinkToTask()}
   else if(id==='fdriveadd'){addDriveLinkToFiles()}
   else if(g('data-openpdf')){
-    const idx=+g('data-openpdf').dataset.openpdf;
-    const a=normAtt(cur?.photos?.[idx]);
+    const a=normAtt(cur?.photos?.[+g('data-openpdf').dataset.openpdf]);
     if(a.data)openPdfData(a.data,a.name);
   }
   else if(g('data-rp')){grab();cur.photos.splice(+g('data-rp').dataset.rp,1);drawT()}
   else if(id==='subadd'){
     const inp=$('#subin'),txt=inp.value.trim();
     if(!txt)return;
-    grab();cur.subs.push({id:uid(),text:txt,done:false});
-    drawT();$('#subin')?.focus();
+    grab();cur.subs.push({id:uid(),text:txt,done:false});drawT();$('#subin')?.focus();
   }
   else if(g('data-subchk')){
     const idx=+g('data-subchk').dataset.subchk;
@@ -1044,41 +957,39 @@ document.addEventListener('click',async e=>{
     const item=S.files.find(x=>x.id===g('data-fo').dataset.fo);
     if(item){$('#big').src=item.data;$('#dv').showModal()}
   }
-  else if(g('data-fs'))saveFile(g('data-fs').dataset.fs);
+  else if(g('data-fs')){saveFile(g('data-fs').dataset.fs)}
   else if(g('data-fx')){
     const b=g('data-fx'),fid=b.dataset.fx;
     if(b.dataset.arm){S.files=S.files.filter(x=>x.id!==fid);save();render();notify('Arquivo excluído.')}
     else{b.dataset.arm=1;b.textContent='Confirmar'}
   }
-  else if(id==='fadd')addFin();
-  else if(g('data-pay')){fpay=g('data-pay').dataset.pay;render()}
+  else if(id==='fadd'){addFin()}
   else if(g('data-fm')){fm=shiftM(fm,+g('data-fm').dataset.fm);render()}
   else if(g('data-fl')){
     const b=g('data-fl'),lid=b.dataset.fl;
     if(b.dataset.arm){S.fin=S.fin.filter(x=>x.id!==lid);save();render();notify('Lançamento removido.')}
     else{b.dataset.arm=1;b.textContent='Confirmar'}
   }
-  else if(id==='tadd')addTrade();
+  else if(id==='tadd'){addTrade()}
   else if(g('data-tm')){tm=shiftM(tm,+g('data-tm').dataset.tm);render()}
-  else if(g('data-tsetup')){tsetup=g('data-tsetup').dataset.tsetup;render()}
   else if(g('data-tdel')){
     const b=g('data-tdel'),tid=b.dataset.tdel;
     if(b.dataset.arm){S.trades=S.trades.filter(x=>x.id!==tid);save();render();notify('Trade removido.')}
     else{b.dataset.arm=1;b.textContent='Confirmar'}
   }
-  else if(id==='pz')openPz();
+  else if(id==='pz'){openPz()}
   else if(g('data-ac')){S.accent=g('data-ac').dataset.ac;applyAcc();save();drawPz();notify('Cor de destaque atualizada.')}
   else if(id==='pr'){S.accent='';applyAcc();save();drawPz();notify('Cor padrão restaurada.')}
-  else if(id==='pc')$('#dk').close();
-  else if(id==='bk')openBk();
-  else if(id==='bx')exportBk();
-  else if(id==='bc')$('#dk').close();
-  else if(id==='qa')addQuick();
-  else if(id==='ns')openS();
-  else if(id==='es')openS(sub(view));
-  else if(id==='tx')$('#dt').close();
-  else if(id==='sx')$('#ds').close();
-  else if(id==='vc')$('#dv').close();
+  else if(id==='pc'){$('#dk').close()}
+  else if(id==='bk'){openBk()}
+  else if(id==='bx'){exportBk()}
+  else if(id==='bc'){$('#dk').close()}
+  else if(id==='qa'){addQuick()}
+  else if(id==='ns'){openS()}
+  else if(id==='es'){openS(sub(view))}
+  else if(id==='tx'){$('#dt').close()}
+  else if(id==='sx'){$('#ds').close()}
+  else if(id==='vc'){$('#dv').close()}
   else if(id==='tsv'){
     grab();
     const{isNew,...t}=cur;
@@ -1113,33 +1024,24 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Enter'&&e.target.id==='q')addQuick();
   if(e.key==='Enter'&&e.target.id==='fa')addFin();
   if(e.key==='Enter'&&e.target.id==='trval')addTrade();
-  if(e.key==='Enter'&&e.target.id==='tdriveurl'){
-    e.preventDefault();
-    addDriveLinkToTask();
-  }
-  if(e.key==='Enter'&&e.target.id==='fdriveurl'){
-    e.preventDefault();
-    addDriveLinkToFiles();
-  }
-  if(e.key==='Enter'&&e.target.id==='subin'){
-    e.preventDefault();
-    $('#subadd')?.click();
-  }
+  if(e.key==='Enter'&&e.target.id==='tdriveurl'){e.preventDefault();addDriveLinkToTask()}
+  if(e.key==='Enter'&&e.target.id==='fdriveurl'){e.preventDefault();addDriveLinkToFiles()}
+  if(e.key==='Enter'&&e.target.id==='subin'){e.preventDefault();$('#subadd')?.click()}
 });
 
 document.addEventListener('input',e=>{
   if(e.target.id==='search'){
     qtext=e.target.value;
-    const pos=e.target.selectionStart;
-    render();
-    const el=$('#search');
-    if(el){el.focus();el.setSelectionRange(pos,pos)}
+    const feed=$('#taskFeed');
+    if(feed){
+      feed.innerHTML=view==='hoje'?renderHojeTasks():renderSubjectTasks(view);
+    }
   }
 });
 
 document.addEventListener('change',async e=>{
   if(e.target.id==='ts'){grab();cur.cat='';drawT()}
-  else if(e.target.id==='rf')restoreBk(e.target.files[0]);
+  else if(e.target.id==='rf'){restoreBk(e.target.files[0])}
   else if(e.target.id==='fu'){await addFiles([...e.target.files])}
   else if(e.target.id==='fmeta'){S.meta=Math.max(0,+e.target.value||0);save();render();notify('Meta mensal atualizada.')}
   else if(e.target.id==='tbanca'){S.bancaIni=Number(e.target.value)||0;save();render();notify('Saldo inicial da banca atualizado.')}
@@ -1177,7 +1079,7 @@ function gastos(){
 function openBk(){
   $('#dk').innerHTML=`<div class="f">
     <h2>Backup dos dados</h2>
-    <p class="sub" style="margin:0">Baixe um arquivo <code>.json</code> com seus assuntos, tarefas, fotos, PDFs, arquivos, links do Drive, trades e lançamentos financeiros.</p>
+    <p class="sub" style="margin:0">Baixe um arquivo <code>.json</code> com seus assuntos, tarefas, anexos, arquivos, links do Drive, trades e lançamentos financeiros.</p>
     <div class="acts" style="justify-content:flex-start"><button class="btn pri" type="button" id="bx">Exportar arquivo (.json)</button></div>
     <label>Restaurar de um backup (substitui os dados atuais e envia à nuvem)<input type="file" id="rf" accept=".json,application/json"></label>
     <p id="bm" class="sub" style="margin:0" role="status"></p>
@@ -1196,11 +1098,9 @@ function triggerDownload(filename,blobOrString,mime='application/json'){
 }
 
 async function exportBk(){
-  const m=$('#bm');
   const fname='central-backup-'+TODAY+'.json';
-  const payload=JSON.stringify(S,null,2);
-  triggerDownload(fname,payload,'application/json');
-  m.textContent='Backup baixado ('+fname+').';notify('Backup exportado!');
+  triggerDownload(fname,JSON.stringify(S,null,2),'application/json');
+  $('#bm').textContent='Backup baixado ('+fname+').';notify('Backup exportado!');
 }
 
 async function restoreBk(f){
@@ -1265,26 +1165,10 @@ function addDriveLinkToFiles(){
   const urlInp=$('#fdriveurl');
   const nameInp=$('#fdrivename');
   const parsed=parseDriveUrl(urlInp?.value);
-  if(!parsed){
-    urlInp?.focus();
-    notify('Cole um link válido do Google Drive.');
-    return;
-  }
+  if(!parsed){urlInp?.focus();notify('Cole um link válido do Google Drive.');return}
   const name=(nameInp?.value||'').trim()||(parsed.isDriveHost?'Arquivo no Google Drive':parsed.host);
-  S.files.push({
-    id:uid(),
-    sub:view,
-    kind:'drive',
-    name,
-    url:parsed.url,
-    type:'drive/link',
-    size:0,
-    date:TODAY,
-    data:''
-  });
-  save();
-  render();
-  notify('Link do Google Drive salvo em Arquivos.');
+  S.files.push({id:uid(),sub:view,kind:'drive',name,url:parsed.url,date:TODAY});
+  save();render();notify('Link do Google Drive salvo em Arquivos.');
 }
 
 function filesView(id){
@@ -1303,8 +1187,7 @@ function filesView(id){
       <span class="sub" id="fm" role="status" style="margin:0"></span>
     </div>`+
     (L.length?L.map(f=>{
-      const isDrv=f.kind==='drive'||f.type==='drive/link'||Boolean(f.url);
-      if(isDrv){
+      if(f.url){
         return `<div class="fl">
           <div class="fi drive">DRV</div>
           <div class="fn"><b>${esc(f.name)}</b><span class="meta">Google Drive · ${new Date(f.date+'T00:00').toLocaleDateString('pt-BR')}</span></div>
@@ -1331,7 +1214,7 @@ async function addFiles(L){
   for(const f of L){
     if(f.size>5242880){big.push(f.name);continue}
     const data=await rd(f);if(!data)continue;
-    S.files.push({id:uid(),sub:view,kind:'file',name:f.name,url:'',type:f.type||'application/octet-stream',size:f.size,date:TODAY,data});
+    S.files.push({id:uid(),sub:view,name:f.name,type:f.type||'application/octet-stream',size:f.size,date:TODAY,data});
     ok++;
   }
   save();render();
@@ -1340,11 +1223,10 @@ async function addFiles(L){
   if(ok)notify(ok+' arquivo(s) salvo(s).');
 }
 
-async function saveFile(id){
+function saveFile(id){
   const f=S.files.find(x=>x.id===id),m=$('#fm');
   if(!f)return;
-  const blob=d2b(f.data);
-  triggerDownload(f.name,blob,f.type||'application/octet-stream');
+  triggerDownload(f.name,d2b(f.data),f.type||'application/octet-stream');
   if(m)m.textContent='Arquivo baixado.';notify('Download concluído.');
 }
 
@@ -1360,7 +1242,7 @@ function addFin(){
     id:uid(),date,type:$('#ft').value,val:Math.round(v*100)/100,
     cat:$('#fc').value.trim()||'Outros',desc:$('#fx').value.trim(),pay:$('#fp').value
   });
-  fm=date.slice(0,7);fpay='';save();render();notify('Lançamento registrado!');$('#fa')?.focus();
+  fm=date.slice(0,7);save();render();notify('Lançamento registrado!');$('#fa')?.focus();
 }
 
 function finView(){
@@ -1368,7 +1250,7 @@ function finView(){
   const E=S.fin.filter(x=>x.date.slice(0,7)===fm);
   const sum=(L,t)=>L.filter(x=>x.type===t).reduce((a,x)=>a+x.val,0);
   const ent=sum(E,'entrada'),sai=sum(E,'saida'),sal=ent-sai;
-  const dias=fm===TODAY.slice(0,7)?new Date().getDate():nd;
+  const dias=fm===CUR_MONTH?new Date().getDate():nd;
   const cats=[...new Set(FC.concat(S.fin.map(x=>x.cat)))];
 
   const D=Array.from({length:nd},()=>({e:0,s:0}));
@@ -1399,7 +1281,7 @@ function finView(){
 
   const pm=S.meta?Math.min(100,sai/S.meta*100):0;
   const leg='<div class="lg"><span><i style="background:var(--acc)"></i>Entradas</span><span><i style="background:var(--bad)"></i>Saídas</span></div>';
-  const filteredList=E.filter(x=>!fpay||x.pay===fpay).sort((a,b)=>a.date<b.date?1:-1);
+  const sortedList=E.slice().sort((a,b)=>a.date<b.date?1:-1);
 
   return `<div class="pn"><h3>Novo lançamento</h3><div class="ff">
     <label>Tipo<select id="ft"><option value="saida">Saída (gasto)</option><option value="entrada">Entrada (ganho)</option></select></label>
@@ -1454,20 +1336,14 @@ function finView(){
   </div>
 
   <div class="pn">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-      <h3 style="margin:0">Lançamentos do mês</h3>
-      <div class="tabs" style="margin-left:0">
-        <button class="tab ${!fpay?'on':''}" data-pay="">Todos</button>
-        ${PAYS.map(p=>`<button class="tab ${fpay===p?'on':''}" data-pay="${p}">${p}</button>`).join('')}
-      </div>
-    </div>
-    ${filteredList.length?filteredList.map(x=>`<div class="task" style="align-items:center">
+    <h3 style="margin-bottom:12px">Lançamentos do mês</h3>
+    ${sortedList.length?sortedList.map(x=>`<div class="task" style="align-items:center">
       <div class="meta" style="min-width:44px;margin:0">${x.date.slice(8)}/${x.date.slice(5,7)}</div>
       <div class="tb"><div class="tt">${esc(x.desc||x.cat)}</div><div class="meta"><span>${esc(x.cat)}</span><span class="pill-tag">${esc(x.pay)}</span></div></div>
       <b style="color:${x.type==='saida'?'var(--bad)':'var(--acc)'};white-space:nowrap">${x.type==='saida'?'−':'+'}${brl(x.val)}</b>
       <button class="btn bad" type="button" data-fl="${x.id}" aria-label="Excluir lançamento">×</button>
     </div>`).join('')
-    :'<div class="empty">Nenhum lançamento encontrado para este filtro.</div>'}
+    :'<div class="empty">Nenhum lançamento neste mês.</div>'}
   </div>`;
 }
 
@@ -1484,21 +1360,12 @@ function addTrade(){
   const pts=isNaN(ptsRaw)?0:(resType==='loss'?-Math.abs(ptsRaw):Math.abs(ptsRaw));
 
   S.trades.push({
-    id:uid(),
-    date,
-    asset:'WIN',
-    side:$('#trside').value,
-    cts:Math.max(1,parseInt($('#trcts').value,10)||1),
-    pts,
-    val,
-    setup:$('#trsetup').value.trim()||'Geral',
-    note:$('#trnote').value.trim()
+    id:uid(),date,asset:'WIN',side:$('#trside').value,
+    cts:Math.max(1,parseInt($('#trcts').value,10)||1),pts,val,
+    setup:$('#trsetup').value.trim()||'Geral',note:$('#trnote').value.trim()
   });
 
-  tm=date.slice(0,7);
-  tsetup='';
-  save();
-  render();
+  tm=date.slice(0,7);save();render();
   notify(val>=0?'Gain registrado!':'Loss registrado.');
   $('#trval')?.focus();
 }
@@ -1531,15 +1398,9 @@ function tradesView(){
   let equitySvg='';
   if(curvePts.length>1){
     const vals=curvePts.map(p=>p.val);
-    const minV=Math.min(...vals);
-    const maxV=Math.max(...vals);
-    const span=Math.max(1,maxV-minV);
+    const minV=Math.min(...vals),maxV=Math.max(...vals),span=Math.max(1,maxV-minV);
     const padX=14,padY=18,W=600,H=155;
-    const coords=curvePts.map((p,i)=>{
-      const x=padX+(i/(curvePts.length-1))*(W-padX*2);
-      const y=H-padY-((p.val-minV)/span)*(H-padY*2);
-      return [x,y,p];
-    });
+    const coords=curvePts.map((p,i)=>[padX+(i/(curvePts.length-1))*(W-padX*2),H-padY-((p.val-minV)/span)*(H-padY*2),p]);
     const poly=coords.map(c=>`${c[0].toFixed(1)},${c[1].toFixed(1)}`).join(' ');
     const area=`${coords[0][0].toFixed(1)},${H-padY} ${poly} ${coords[coords.length-1][0].toFixed(1)},${H-padY}`;
     const lineCol=patrimonioAtual>=bancaIni?'var(--ok)':'var(--bad)';
@@ -1563,12 +1424,12 @@ function tradesView(){
   const maxAbs=Math.max(1,...dayNet.map(v=>Math.abs(v)));
   const bw=600/nd,midY=68;
   const dayBars=dayNet.map((v,i)=>{
-    if(!v)return ((i+1)%5===0||i===0?`<text x="${i*bw+bw/2}" y="142" text-anchor="middle" style="fill:var(--mute);font-size:10px">${i+1}</text>`:'');
+    const lbl=((i+1)%5===0||i===0?`<text x="${i*bw+bw/2}" y="142" text-anchor="middle" style="fill:var(--mute);font-size:10px">${i+1}</text>`:'');
+    if(!v)return lbl;
     const h=Math.max(3,(Math.abs(v)/maxAbs)*50);
     const y=v>=0?midY-h:midY;
     const col=v>=0?'var(--ok)':'var(--bad)';
-    return `<rect x="${i*bw+bw*.16}" y="${y}" width="${bw*.68}" height="${h}" rx="2" style="fill:${col}"><title>Dia ${i+1}: ${sbrl(v)}</title></rect>`+
-           ((i+1)%5===0||i===0?`<text x="${i*bw+bw/2}" y="142" text-anchor="middle" style="fill:var(--mute);font-size:10px">${i+1}</text>`:'');
+    return `<rect x="${i*bw+bw*.16}" y="${y}" width="${bw*.68}" height="${h}" rx="2" style="fill:${col}"><title>Dia ${i+1}: ${sbrl(v)}</title></rect>`+lbl;
   }).join('');
 
   const bySetup={};
@@ -1576,7 +1437,7 @@ function tradesView(){
   const setupEntries=Object.entries(bySetup).sort((a,b)=>b[1]-a[1]);
   const maxSetupAbs=Math.max(1,...setupEntries.map(x=>Math.abs(x[1])));
   const allSetups=[...new Set(SETUPS.concat(all.map(x=>x.setup)))];
-  const filteredTrades=M.filter(x=>!tsetup||x.setup===tsetup).slice().reverse();
+  const monthTrades=M.slice().reverse();
 
   return `
   <div class="pn">
@@ -1604,9 +1465,7 @@ function tradesView(){
     <button class="btn pri" type="button" id="tadd">Lançar trade</button>
   </div></div>
 
-  <div class="pn"><h3>Curva de Capital (Patrimônio Acumulado)</h3>
-    ${equitySvg}
-  </div>
+  <div class="pn"><h3>Curva de Capital (Patrimônio Acumulado)</h3>${equitySvg}</div>
 
   <div class="head" style="align-items:center;margin-bottom:12px">
     <button class="tab" type="button" data-tm="-1" aria-label="Mês anterior">‹</button>
@@ -1638,14 +1497,8 @@ function tradesView(){
   </div>
 
   <div class="pn">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-      <h3 style="margin:0">Histórico de Trades do Mês</h3>
-      <div class="tabs" style="margin-left:0">
-        <button class="tab ${!tsetup?'on':''}" data-tsetup="">Todos</button>
-        ${[...new Set(M.map(x=>x.setup))].map(st=>`<button class="tab ${tsetup===st?'on':''}" data-tsetup="${esc(st)}">${esc(st)}</button>`).join('')}
-      </div>
-    </div>
-    ${filteredTrades.length?filteredTrades.map(x=>`<div class="task" style="align-items:center">
+    <h3 style="margin-bottom:12px">Histórico de Trades do Mês</h3>
+    ${monthTrades.length?monthTrades.map(x=>`<div class="task" style="align-items:center">
       <div class="meta" style="min-width:44px;margin:0">${x.date.slice(8)}/${x.date.slice(5,7)}</div>
       <div class="tb">
         <div class="tt">WIN · ${esc(x.side)} (${x.cts} ct${x.cts>1?'s':''}) ${x.pts?`· ${x.pts>0?'+':''}${x.pts} pts`:''}</div>
@@ -1656,7 +1509,8 @@ function tradesView(){
       </div>
       <b style="color:${x.val>=0?'var(--ok)':'var(--bad)'};white-space:nowrap">${sbrl(x.val)}</b>
       <button class="btn bad" type="button" data-tdel="${x.id}" aria-label="Excluir trade">×</button>
-    </div>`).join(''):'<div class="empty">Nenhum trade encontrado para este filtro.</div>'}
+    </div>`).join('')
+    :'<div class="empty">Nenhum trade registrado neste mês.</div>'}
   </div>`;
 }
 
